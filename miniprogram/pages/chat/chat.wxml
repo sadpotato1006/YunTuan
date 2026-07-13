@@ -1,4 +1,8 @@
 <view class="chat-page">
+  <view class="chat-toolbar">
+    <text>对话记录仅保存在本机</text>
+    <button class="clear-btn" disabled="{{thinking || loading}}" bindtap="clearConversation">清空</button>
+  </view>
   <scroll-view class="messages" scroll-y scroll-into-view="{{scrollIntoView}}">
     <view wx:if="{{loading}}" class="loading">正在连接云团…</view>
     <view wx:for="{{messages}}" wx:key="id" class="message-row {{item.role}}">
@@ -8,6 +12,24 @@
     <view id="chat-bottom" class="chat-bottom"></view>
   </scroll-view>
   <view class="voice-panel">
+    <view class="text-input-row">
+      <input
+        class="chat-input"
+        value="{{inputValue}}"
+        placeholder="输入想说的话"
+        maxlength="200"
+        confirm-type="send"
+        disabled="{{thinking || loading || listening}}"
+        bindinput="onInput"
+        bindconfirm="sendTextMessage"
+      />
+      <button
+        class="send-btn"
+        disabled="{{thinking || loading || listening || !inputValue}}"
+        bindtap="sendTextMessage"
+      >发送</button>
+    </view>
+    <view class="divider"><text>或者</text></view>
     <text class="voice-hint">{{listening ? '正在聆听，请说话…' : (thinking ? '正在思考，请稍候…' : '点击按钮开始说话')}}</text>
     <button class="voice-btn {{listening ? 'listening' : ''}}" disabled="{{thinking || loading}}" bindtap="toggleListening">
       {{listening ? '结束说话' : (thinking ? '思考中…' : '开始说话')}}

@@ -2,6 +2,7 @@
   "pages": [
     "pages/home/home",
     "pages/chat/chat",
+    "pages/ble-debug/ble-debug",
     "pages/device/device",
     "pages/emotion/emotion",
     "pages/settings/settings"

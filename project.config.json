@@ -34,5 +34,6 @@
   "appid": "wxc25a0157cb8becd0",
   "projectname": "yuntuan",
   "simulatorPluginLibVersion": {},
-  "editorSetting": {}
+  "editorSetting": {},
+  "cloudfunctionTemplateRoot": "cloudfunctionTemplate/"
 }

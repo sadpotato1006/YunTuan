@@ -4,4 +4,5 @@
 .setting-item:last-child, .link-item:last-child { border-bottom: 0; }
 .setting-item text { display: block; color: #7b8883; font-size: 26rpx; margin-top: 8rpx; }
 .arrow { color: #99a39f; font-size: 50rpx; }
+.danger-link { color: #b85f51; }
 .version { text-align: center; color: #929c98; font-size: 26rpx; margin-top: 50rpx; }

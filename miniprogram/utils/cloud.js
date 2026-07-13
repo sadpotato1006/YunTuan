@@ -1,39 +1,84 @@
 const config = require("../config/index");
 
+/**
+ * 统一调用微信云函数，并把云端错误转换为页面可直接展示的 Error。
+ */
 function callCloudFunction(name, data) {
   return new Promise((resolve, reject) => {
-    if (config.backendMode !== "cloud") {
+    if (!config.usesCloudBackend()) {
       reject(new Error("当前未启用云开发模式"));
       return;
     }
     if (!config.cloudEnvId) {
-      reject(new Error("请先在配置中填写云开发环境 ID"));
+      reject(new Error("尚未配置云开发环境 ID"));
       return;
     }
     if (!wx.cloud || typeof wx.cloud.callFunction !== "function") {
-      reject(new Error("当前微信基础库不支持云开发"));
+      reject(new Error("当前环境不支持微信云开发"));
       return;
     }
 
-    wx.cloud.callFunction({ name, data: data || {} })
-      .then(response => {
+    const app = typeof getApp === "function" ? getApp() : null;
+    if (app && app.globalData && !app.globalData.cloudInitialized) {
+      reject(new Error("微信云开发尚未初始化，请检查环境配置"));
+      return;
+    }
+
+    wx.cloud.callFunction({
+      name,
+      data: data || {},
+      success(response) {
         const result = response && response.result;
-        // 所有云函数也必须遵循统一的 code/message/data 返回格式。
-        if (!result || typeof result.code !== "number" || !("data" in result)) {
-          reject(new Error("云函数返回格式异常"));
+        if (!result) {
+          reject(new Error("云函数没有返回处理结果"));
+          return;
+        }
+        // 所有云函数都必须遵循统一的 code/message/data 返回格式。
+        if (typeof result !== "object" || typeof result.code !== "number" || !("data" in result)) {
+          reject(new Error("云函数返回的数据格式不正确"));
           return;
         }
         if (result.code !== 0) {
-          reject(new Error(result.message || "云函数处理失败"));
+          reject(new Error(result.message || "云函数调用失败"));
           return;
         }
         resolve(result);
-      })
-      .catch(error => {
-        const detail = error && error.errMsg ? error.errMsg : "未知错误";
-        reject(new Error(`云函数调用失败：${detail}`));
-      });
+      },
+      fail(error) {
+        // 只记录微信返回的错误信息，不输出任何 AI 密钥或敏感配置。
+        console.error(`调用云函数 ${name} 失败：`, error);
+        reject(new Error(getFriendlyCloudError(error)));
+      }
+    });
   });
 }
 
+/**
+ * 微信底层 errMsg 往往很长，这里只向用户展示容易理解的简短提示。
+ */
+function getFriendlyCloudError(error) {
+  const message = error && error.errMsg ? error.errMsg : "";
+
+  if (
+    message.includes("-504003") ||
+    message.includes("TIME_LIMIT_EXCEEDED") ||
+    message.toLowerCase().includes("timed out")
+  ) {
+    return "AI 回复时间有点长，请稍后再试";
+  }
+  if (message.includes("FUNCTION_NOT_FOUND") || message.includes("-501000")) {
+    return "聊天服务尚未部署，请联系管理员";
+  }
+  if (message.includes("NETWORK_ERROR") || message.toLowerCase().includes("network")) {
+    return "网络连接不稳定，请稍后再试";
+  }
+  if (message.includes("ENV") || message.includes("environment")) {
+    return "云开发环境配置有误，请联系管理员";
+  }
+  return "聊天服务暂时不可用，请稍后再试";
+}
+
+// 保留默认函数导出，避免影响 device、emotion 等现有 service；也支持具名导入。
 module.exports = callCloudFunction;
+module.exports.callCloudFunction = callCloudFunction;
+module.exports.getFriendlyCloudError = getFriendlyCloudError;

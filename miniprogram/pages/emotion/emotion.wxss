@@ -1,5 +1,12 @@
 .header { margin: 12rpx 4rpx 36rpx; }
 .header .muted { display: block; margin-top: 12rpx; font-size: 28rpx; }
+.checkin-btn { min-height: 92rpx; margin-bottom: 24rpx; border-radius: 20rpx; background: #52796f !important; color: #fff !important; font-size: 33rpx; }
+.checkin-btn::after, .emotion-option::after { border: 0; }
+.checkin-card { padding-bottom: 24rpx; }
+.emotion-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16rpx; }
+.emotion-option { min-height: 118rpx; margin: 0; padding: 14rpx; border-radius: 18rpx; background: #edf3ee !important; color: #425b54 !important; font-size: 29rpx; display: flex; align-items: center; justify-content: center; }
+.option-icon { font-size: 42rpx; margin-right: 12rpx; }
+.checkin-tip { display: block; margin-top: 18rpx; color: #87938f; font-size: 25rpx; line-height: 1.5; }
 .record { border-left: 8rpx solid #8aafa0; }
 .record-top { display: flex; justify-content: space-between; color: #71807b; font-size: 28rpx; }
 .score { color: #52796f; font-weight: 600; }

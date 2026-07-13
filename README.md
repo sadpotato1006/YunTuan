@@ -2,6 +2,8 @@
 
 “云团”是面向随迁老人的陪伴类产品。本仓库当前提供原生微信小程序前端、Mock 数据以及可部署的微信云函数占位实现，不包含真实 AI、数据库和 BLE 通信。
 
+硬件联调前请先评审 [云团挂件 BLE 通信协议草案 v0.1](docs/YUNTUAN_BLE_PROTOCOL_V0.1.md)。
+
 ## 后端模式
 
 在 `miniprogram/config/index.js` 中修改 `backendMode`：
@@ -11,6 +13,19 @@
 - `http`：由统一封装的 `wx.request` 调用自建服务器，未来可连接 Node.js、Python 或 Java 后端。
 
 页面只调用 `services`，切换模式不需要修改页面。
+
+也可以通过 `serviceBackendModes` 为不同业务单独指定模式。当前项目仅有 `chat`
+使用已部署的云函数，`device` 和 `emotion` 在对应云函数部署前继续使用 Mock：
+
+```js
+serviceBackendModes: {
+  chat: "cloud",
+  device: "mock",
+  emotion: "mock"
+}
+```
+
+某项未配置时，会自动使用 `backendMode` 作为默认值。
 
 ## 使用 Mock 模式
 

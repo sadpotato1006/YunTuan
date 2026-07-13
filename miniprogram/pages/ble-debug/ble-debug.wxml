@@ -1,0 +1,157 @@
+<view class="page debug-page">
+  <view class="notice card">
+    <view class="section-title">通用 GATT 调试台</view>
+    <text>可以读取、订阅和手动写入 BLE 特征值，不依赖最终业务协议。请只对明确允许测试的硬件写入数据，并使用手机真机预览。</text>
+    <button class="simulator-btn" bindtap="loadSimulator">没有硬件？加载模拟 BLE 设备</button>
+  </view>
+
+  <view class="status-card card">
+    <view class="status-row">
+      <text class="status-dot {{bleState.available ? 'ready' : ''}}"></text>
+      <text>{{bleState.statusText}}</text>
+    </view>
+    <text wx:if="{{bleState.errorMessage}}" class="error-text">{{bleState.errorMessage}}</text>
+  </view>
+
+  <view class="filter-row">
+    <text>按暂定名称 YT- 过滤</text>
+    <switch checked="{{onlyYuntuan}}" color="#52796F" bindchange="toggleFilter" />
+  </view>
+
+  <view class="action-row">
+    <button wx:if="{{!bleState.discovering}}" class="primary-btn action-btn" disabled="{{bleState.connecting}}" bindtap="startScan">开始搜索</button>
+    <button wx:else class="secondary-btn action-btn" bindtap="stopScan">停止搜索</button>
+  </view>
+
+  <view class="section-title list-title">附近设备（{{displayDevices.length}}）</view>
+  <view wx:if="{{!displayDevices.length}}" class="empty card">
+    <text>{{bleState.discovering ? '正在搜索，请把设备放在手机附近…' : '尚未发现 BLE 设备'}}</text>
+  </view>
+  <view wx:for="{{displayDevices}}" wx:key="deviceId" class="device-item card">
+    <view class="device-info">
+      <text class="device-name">{{item.name}}</text>
+      <text class="device-id">{{item.deviceId}}</text>
+      <text class="rssi">信号 {{item.RSSI}} dBm</text>
+    </view>
+    <button
+      class="connect-btn"
+      loading="{{bleState.connecting && bleState.deviceId === item.deviceId}}"
+      disabled="{{bleState.connecting || (bleState.connected && bleState.deviceId !== item.deviceId)}}"
+      data-device-id="{{item.deviceId}}"
+      bindtap="connectDevice"
+    >{{bleState.connected && bleState.deviceId === item.deviceId ? '已连接' : '连接'}}</button>
+  </view>
+
+  <view wx:if="{{bleState.connected}}" class="connection-card card">
+    <view class="section-title">当前连接</view>
+    <text class="connected-name">{{bleState.deviceName}}</text>
+    <text class="device-id">{{bleState.deviceId}}</text>
+    <text wx:if="{{bleState.simulated}}" class="simulated-tag">模拟模式，不会调用手机蓝牙</text>
+    <button class="disconnect-btn" bindtap="disconnectDevice">断开连接</button>
+  </view>
+
+  <view wx:if="{{bleState.services.length}}">
+    <view class="section-title list-title">GATT 服务与特征值</view>
+    <view wx:for="{{bleState.services}}" wx:key="uuid" wx:for-item="service" class="service-card card">
+      <view class="uuid-row" data-uuid="{{service.uuid}}" bindtap="copyUuid">
+        <text class="service-name">{{service.displayName}}</text>
+        <text class="uuid-label">Service{{service.isPrimary ? ' · Primary' : ''}}</text>
+        <text class="uuid-value">{{service.uuid}}</text>
+      </view>
+      <text wx:if="{{service.errorMessage}}" class="error-text">{{service.errorMessage}}</text>
+
+      <view wx:for="{{service.characteristics}}" wx:key="uuid" wx:for-item="characteristic" class="characteristic">
+        <view class="uuid-row" data-uuid="{{characteristic.uuid}}" bindtap="copyUuid">
+          <text class="characteristic-name">{{characteristic.displayName}}</text>
+          <text class="uuid-label">Characteristic</text>
+          <text class="uuid-value">{{characteristic.uuid}}</text>
+        </view>
+        <text class="property-text">{{characteristic.propertyText}}</text>
+
+        <view class="gatt-actions">
+          <button
+            wx:if="{{characteristic.canRead}}"
+            class="gatt-btn"
+            data-service-id="{{service.uuid}}"
+            data-characteristic-id="{{characteristic.uuid}}"
+            bindtap="readCharacteristic"
+          >读取</button>
+          <button
+            wx:if="{{characteristic.canNotify}}"
+            class="gatt-btn {{characteristic.subscribed ? 'active' : ''}}"
+            data-service-id="{{service.uuid}}"
+            data-characteristic-id="{{characteristic.uuid}}"
+            data-subscribed="{{characteristic.subscribed}}"
+            bindtap="toggleNotify"
+          >{{characteristic.subscribed ? '取消订阅' : '订阅通知'}}</button>
+          <button
+            wx:if="{{characteristic.canWrite}}"
+            class="gatt-btn write"
+            data-service-id="{{service.uuid}}"
+            data-characteristic-id="{{characteristic.uuid}}"
+            bindtap="openWritePanel"
+          >写入 HEX</button>
+        </view>
+
+        <view wx:if="{{characteristic.lastValueHex}}" class="value-card">
+          <view class="value-title"><text>最近收到</text><text>{{characteristic.lastUpdatedAt}}</text></view>
+          <text class="hex-value">HEX：{{characteristic.lastValueHex}}</text>
+          <text wx:if="{{characteristic.lastValueText}}" class="text-value">UTF-8：{{characteristic.lastValueText}}</text>
+          <text wx:if="{{characteristic.valueMeaning}}" class="meaning-value">{{characteristic.valueMeaning}}</text>
+        </view>
+      </view>
+    </view>
+    <text class="copy-tip">点击 UUID 可以复制，方便与硬件工程师核对。</text>
+  </view>
+
+  <view class="log-section card">
+    <view class="log-header">
+      <view>
+        <view class="section-title">联调日志</view>
+        <text class="log-count">最近 {{bleState.logs.length}} 条</text>
+      </view>
+      <view class="log-actions">
+        <button class="small-btn" bindtap="copyLogs">复制</button>
+        <button class="small-btn" bindtap="clearLogs">清空</button>
+      </view>
+    </view>
+    <scroll-view wx:if="{{bleState.logs.length}}" class="log-list" scroll-y>
+      <view wx:for="{{bleState.logs}}" wx:key="id" class="log-item">
+        <text class="log-time">{{item.time}}</text>
+        <text class="log-level {{item.level}}">{{item.level}}</text>
+        <text class="log-message">{{item.message}}</text>
+        <text wx:if="{{item.detail}}" class="log-detail">{{item.detail}}</text>
+      </view>
+    </scroll-view>
+    <view wx:else class="empty-log">暂无日志</view>
+  </view>
+
+  <view wx:if="{{writePanel.visible}}" class="dialog-mask" bindtap="closeWritePanel" catchtouchmove="preventClose">
+    <view class="write-dialog" catchtap="preventClose">
+      <view class="dialog-title">写入特征值</view>
+      <text class="dialog-name">{{writePanel.characteristicName}}</text>
+      <text class="dialog-uuid">{{writePanel.characteristicId}}</text>
+      <text class="warning-text">只向已知测试硬件写入硬件组确认的数据。随机写入可能改变设备状态。</text>
+
+      <textarea
+        class="hex-input"
+        value="{{writePanel.hexValue}}"
+        placeholder="输入十六进制，例如：03 01"
+        maxlength="500"
+        bindinput="onHexInput"
+      />
+
+      <radio-group class="write-types" bindchange="onWriteTypeChange">
+        <label wx:for="{{writePanel.writeTypes}}" wx:key="value" class="write-type-item">
+          <radio value="{{item.value}}" checked="{{writePanel.writeType === item.value}}" color="#52796F" />
+          <text>{{item.label}}</text>
+        </label>
+      </radio-group>
+
+      <view class="dialog-actions">
+        <button class="cancel-btn" bindtap="closeWritePanel">取消</button>
+        <button class="send-hex-btn" disabled="{{!writePanel.hexValue}}" bindtap="sendHexData">发送</button>
+      </view>
+    </view>
+  </view>
+</view>

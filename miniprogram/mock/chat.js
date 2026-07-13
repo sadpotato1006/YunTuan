@@ -17,7 +17,8 @@ function sendMessage(message) {
         return;
       }
       resolve({ code: 0, message: "success", data: {
-        reply: "我听到了。慢慢来，我会一直陪着您。今天有没有什么让您开心的小事？"
+        reply: "我听到了。慢慢来，我会一直陪着您。今天有没有什么让您开心的小事？",
+        emotion: "unknown"
       }});
     }, 1400);
   });

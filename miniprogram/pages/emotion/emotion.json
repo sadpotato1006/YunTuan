@@ -1,1 +1,1 @@
-{ "navigationBarTitleText": "情绪记录" }
+{ "navigationBarTitleText": "情绪记录", "enablePullDownRefresh": true }

@@ -7,6 +7,7 @@
       <view class="connection {{device.connected ? 'connected' : ''}}">{{device.connected ? '● 已连接' : '● 未连接'}}</view>
       <view class="battery-wrap"><view class="battery-fill" style="width: {{device.battery}}%"></view></view>
       <text class="battery-text">剩余电量 {{device.battery}}%</text>
+      <text wx:if="{{device.battery <= 20}}" class="low-battery">电量较低，请及时充电</text>
     </view>
     <view class="card setting-row">
       <view><view class="section-title">社交模式</view><text class="muted">开启后可接收附近互动提醒</text></view>
@@ -14,6 +15,8 @@
     </view>
     <button wx:if="{{!device.connected}}" class="primary-btn" loading="{{operating}}" bindtap="bindDevice">绑定设备</button>
     <button wx:else class="secondary-btn" loading="{{operating}}" bindtap="disconnectDevice">断开设备</button>
+    <button class="debug-btn" bindtap="goBleDebug">打开蓝牙联调工具</button>
+    <view class="ble-tip">设备设置已保存在本机。下拉页面可以刷新状态。</view>
     <view class="ble-tip">当前为模拟设备数据，暂未启用蓝牙通信。</view>
   </block>
 </view>

@@ -15,6 +15,13 @@
       <view class="section-title">今日关怀</view>
       <text class="care-text">{{careTip}}</text>
     </view>
+    <view wx:if="{{latestEmotion}}" class="card mood-card" bindtap="goEmotion">
+      <view>
+        <view class="section-title">最近心情</view>
+        <text class="muted">{{latestEmotion.date}} · {{latestEmotion.note}}</text>
+      </view>
+      <view class="mood-score"><text>{{latestEmotion.name}}</text><text>{{latestEmotion.score}} 分</text></view>
+    </view>
     <view class="quick-grid">
       <view class="quick-item" bindtap="goDevice"><text class="quick-icon">⌁</text><text>我的设备</text></view>
       <view class="quick-item" bindtap="goEmotion"><text class="quick-icon">♡</text><text>情绪记录</text></view>

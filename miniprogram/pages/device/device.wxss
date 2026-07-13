@@ -5,6 +5,9 @@
 .battery-wrap { width: 80%; height: 24rpx; margin: auto; background: #e8ece9; border-radius: 20rpx; overflow: hidden; }
 .battery-fill { height: 100%; background: #77a47b; border-radius: 20rpx; }
 .battery-text { display: block; margin-top: 14rpx; color: #60706b; }
+.low-battery { display: block; margin-top: 12rpx; color: #bd6757; font-size: 28rpx; }
 .setting-row { display: flex; justify-content: space-between; align-items: center; }
 .setting-row .section-title { margin-bottom: 8rpx; }
-.ble-tip { text-align: center; color: #89938f; font-size: 27rpx; margin-top: 28rpx; }
+.debug-btn { min-height: 84rpx; margin-top: 22rpx; border-radius: 20rpx; background: #fff !important; color: #52796f !important; font-size: 29rpx; }
+.debug-btn::after { border-color: #b8c9c3; }
+.ble-tip { text-align: center; color: #89938f; font-size: 27rpx; margin-top: 18rpx; }

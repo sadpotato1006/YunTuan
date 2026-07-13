@@ -8,6 +8,14 @@
 .chat-btn { margin: 32rpx 0; }
 .care-card { border-left: 8rpx solid #e6b566; }
 .care-text { line-height: 1.8; color: #52625d; }
+.mood-card { display: flex; align-items: center; justify-content: space-between; }
+.mood-card > view:first-child { flex: 1; padding-right: 24rpx; }
+.mood-card .section-title { margin-bottom: 8rpx; }
+.mood-card .muted { font-size: 27rpx; line-height: 1.55; }
+.mood-score { flex-shrink: 0; color: #52796f; text-align: right; }
+.mood-score text { display: block; }
+.mood-score text:first-child { font-size: 34rpx; font-weight: 600; margin-bottom: 6rpx; }
+.mood-score text:last-child { font-size: 27rpx; }
 .quick-grid { display: flex; gap: 18rpx; }
 .quick-item { flex: 1; min-height: 150rpx; background: #fff; border-radius: 20rpx; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 28rpx; }
 .quick-icon { font-size: 46rpx; color: #52796f; margin-bottom: 10rpx; }

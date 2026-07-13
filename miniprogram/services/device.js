@@ -4,9 +4,11 @@ const callCloudFunction = require("../utils/cloud");
 const mock = require("../mock/device");
 
 function invoke(action, mockFn, httpOptions, data) {
-  if (config.backendMode === "mock") return mockFn();
-  if (config.backendMode === "cloud") return callCloudFunction("device", Object.assign({ action }, data || {}));
-  return request(httpOptions);
+  const mode = config.getBackendMode("device");
+  if (mode === "mock") return mockFn();
+  if (mode === "cloud") return callCloudFunction("device", Object.assign({ action }, data || {}));
+  if (mode === "http") return request(httpOptions);
+  return Promise.reject(new Error(`未知的设备后端模式：${mode}`));
 }
 
 function getDevice() { return invoke("getDevice", mock.getDevice, { url: "/device" }); }

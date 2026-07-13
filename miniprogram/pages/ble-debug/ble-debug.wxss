@@ -1,0 +1,74 @@
+.debug-page { padding-bottom: 60rpx; }
+.notice { background: #fff9e9; color: #665b43; line-height: 1.65; }
+.notice .section-title { margin-bottom: 10rpx; }
+.simulator-btn { min-height: 76rpx; margin-top: 22rpx; border-radius: 18rpx; background: #6d7862 !important; color: #fff !important; font-size: 28rpx; }
+.simulator-btn::after { border: 0; }
+.status-row { display: flex; align-items: center; }
+.status-dot { width: 18rpx; height: 18rpx; margin-right: 14rpx; border-radius: 50%; background: #aaa; }
+.status-dot.ready { background: #62a36c; }
+.error-text { display: block; margin-top: 14rpx; color: #b85f51; font-size: 27rpx; line-height: 1.5; }
+.filter-row { min-height: 90rpx; margin-bottom: 20rpx; display: flex; align-items: center; justify-content: space-between; font-size: 29rpx; }
+.action-row { margin-bottom: 32rpx; }
+.action-btn { width: 100%; }
+.list-title { margin: 30rpx 4rpx 18rpx; }
+.device-item { display: flex; align-items: center; justify-content: space-between; }
+.device-info { flex: 1; min-width: 0; padding-right: 20rpx; }
+.device-name, .connected-name { display: block; font-size: 34rpx; font-weight: 600; }
+.device-id { display: block; margin-top: 10rpx; color: #86928e; font-size: 23rpx; word-break: break-all; }
+.rssi { display: block; margin-top: 10rpx; color: #52796f; font-size: 26rpx; }
+.connect-btn { width: 150rpx; min-height: 74rpx; margin: 0; padding: 0; border-radius: 18rpx; background: #e5efe9 !important; color: #416a60 !important; font-size: 29rpx; }
+.connect-btn::after { border: 0; }
+.connection-card { border-left: 8rpx solid #66a072; }
+.simulated-tag { display: inline-block; margin-top: 14rpx; padding: 7rpx 14rpx; border-radius: 10rpx; background: #fff0cc; color: #846321; font-size: 24rpx; }
+.disconnect-btn { min-height: 78rpx; margin-top: 24rpx; border-radius: 18rpx; background: #f4e9e5 !important; color: #a6574b !important; font-size: 29rpx; }
+.disconnect-btn::after { border: 0; }
+.service-card { padding: 24rpx; }
+.uuid-row { padding: 10rpx 0; }
+.service-name, .characteristic-name { display: block; margin-bottom: 8rpx; color: #344c45; font-size: 30rpx; font-weight: 600; }
+.uuid-label { display: block; color: #52796f; font-size: 25rpx; font-weight: 600; }
+.uuid-value { display: block; margin-top: 7rpx; color: #485954; font-size: 23rpx; word-break: break-all; }
+.characteristic { margin-top: 16rpx; padding: 16rpx 18rpx; border-radius: 16rpx; background: #f3f6f3; }
+.property-text { display: block; margin-top: 6rpx; color: #71807b; font-size: 25rpx; }
+.gatt-actions { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 18rpx; }
+.gatt-btn { min-width: 126rpx; min-height: 62rpx; line-height: 62rpx; margin: 0; padding: 0 18rpx; border-radius: 14rpx; background: #e7efe9 !important; color: #426a60 !important; font-size: 26rpx; }
+.gatt-btn.active { background: #52796f !important; color: #fff !important; }
+.gatt-btn.write { background: #fff1d9 !important; color: #856329 !important; }
+.gatt-btn::after { border: 0; }
+.value-card { margin-top: 18rpx; padding: 18rpx; border-radius: 14rpx; background: #1f2926; color: #e9f0ed; }
+.value-title { display: flex; justify-content: space-between; color: #9fb2aa; font-size: 23rpx; }
+.hex-value, .text-value, .meaning-value { display: block; margin-top: 10rpx; font-family: monospace; font-size: 24rpx; line-height: 1.5; word-break: break-all; }
+.meaning-value { color: #9ed3af; font-family: sans-serif; font-weight: 600; }
+.copy-tip { display: block; text-align: center; color: #89938f; font-size: 25rpx; }
+.log-section { margin-top: 34rpx; padding: 24rpx; }
+.log-header { display: flex; align-items: center; justify-content: space-between; }
+.log-header .section-title { margin-bottom: 2rpx; }
+.log-count { color: #89938f; font-size: 24rpx; }
+.log-actions { display: flex; gap: 12rpx; }
+.small-btn { min-width: 96rpx; min-height: 58rpx; line-height: 58rpx; margin: 0; padding: 0 14rpx; border-radius: 14rpx; background: #edf2ef !important; color: #52796f !important; font-size: 25rpx; }
+.small-btn::after { border: 0; }
+.log-list { height: 460rpx; margin-top: 20rpx; border-radius: 14rpx; background: #202825; }
+.log-item { padding: 14rpx 16rpx; border-bottom: 1rpx solid #34403c; font-family: monospace; font-size: 23rpx; line-height: 1.45; }
+.log-time { color: #899a93; margin-right: 10rpx; }
+.log-level { display: inline-block; min-width: 82rpx; color: #a9c9bd; }
+.log-level.ERROR { color: #ef9a8c; }
+.log-level.WARN { color: #e8c477; }
+.log-level.TX { color: #8ec5ff; }
+.log-level.RX { color: #9fe1a8; }
+.log-message { color: #e4ebe8; }
+.log-detail { display: block; margin-top: 5rpx; color: #9eada7; word-break: break-all; }
+.empty-log { padding: 46rpx 0 24rpx; text-align: center; color: #89938f; }
+.dialog-mask { position: fixed; z-index: 1000; top: 0; right: 0; bottom: 0; left: 0; display: flex; align-items: flex-end; background: rgba(0,0,0,.5); }
+.write-dialog { width: 100%; box-sizing: border-box; padding: 34rpx 34rpx calc(36rpx + env(safe-area-inset-bottom)); border-radius: 28rpx 28rpx 0 0; background: #fff; }
+.dialog-title { font-size: 38rpx; font-weight: 700; }
+.dialog-name { display: block; margin-top: 14rpx; color: #52796f; font-size: 28rpx; }
+.dialog-uuid { display: block; margin-top: 8rpx; color: #89938f; font-size: 22rpx; word-break: break-all; }
+.warning-text { display: block; margin-top: 20rpx; padding: 16rpx; border-radius: 12rpx; background: #fff4e1; color: #815e25; font-size: 25rpx; line-height: 1.5; }
+.hex-input { width: 100%; height: 150rpx; box-sizing: border-box; margin-top: 22rpx; padding: 20rpx; border-radius: 16rpx; background: #f1f4f2; font-family: monospace; font-size: 30rpx; }
+.write-types { margin-top: 20rpx; }
+.write-type-item { display: flex; align-items: center; min-height: 62rpx; font-size: 27rpx; }
+.write-type-item radio { transform: scale(.85); }
+.dialog-actions { display: flex; gap: 18rpx; margin-top: 24rpx; }
+.cancel-btn, .send-hex-btn { flex: 1; min-height: 82rpx; border-radius: 18rpx; font-size: 30rpx; }
+.cancel-btn { background: #edf1ef !important; color: #60706b !important; }
+.send-hex-btn { background: #52796f !important; color: #fff !important; }
+.cancel-btn::after, .send-hex-btn::after { border: 0; }

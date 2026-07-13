@@ -1,4 +1,7 @@
 .chat-page { height: 100vh; display: flex; flex-direction: column; background: #f5f7f3; }
+.chat-toolbar { min-height: 64rpx; padding: 8rpx 30rpx; display: flex; align-items: center; justify-content: space-between; color: #87938f; font-size: 25rpx; background: #eef2ee; }
+.clear-btn { min-width: 100rpx; min-height: 56rpx; line-height: 56rpx; margin: 0; padding: 0 18rpx; border-radius: 16rpx; background: transparent !important; color: #71807b !important; font-size: 27rpx; }
+.clear-btn::after { border-color: #cdd5d1; }
 .messages { flex: 1; height: 0; padding: 28rpx; box-sizing: border-box; }
 .message-row { display: flex; margin: 22rpx 0; }
 .message-row.user { justify-content: flex-end; }
@@ -6,7 +9,14 @@
 .user .bubble { background: #608d81; color: #fff; border-radius: 24rpx 24rpx 6rpx 24rpx; }
 .thinking { color: #71807b; }
 .chat-bottom { height: 30rpx; }
-.voice-panel { background: #fff; padding: 24rpx 36rpx 40rpx; text-align: center; box-shadow: 0 -8rpx 24rpx rgba(40,60,50,.05); }
+.voice-panel { background: #fff; padding: 22rpx 30rpx 36rpx; text-align: center; box-shadow: 0 -8rpx 24rpx rgba(40,60,50,.05); }
+.text-input-row { display: flex; align-items: center; gap: 16rpx; }
+.chat-input { flex: 1; min-height: 84rpx; box-sizing: border-box; padding: 0 26rpx; border-radius: 20rpx; background: #f1f4f1; text-align: left; font-size: 31rpx; color: #2f3e3a; }
+.send-btn { width: 142rpx; min-height: 84rpx; margin: 0; padding: 0; border-radius: 20rpx; background: #52796f !important; color: #fff !important; font-size: 31rpx; display: flex; align-items: center; justify-content: center; }
+.send-btn[disabled] { background: #b5c3be !important; color: #f5f6f5 !important; }
+.send-btn::after { border: 0; }
+.divider { display: flex; align-items: center; justify-content: center; margin: 18rpx 0 12rpx; color: #9aa5a1; font-size: 25rpx; }
+.divider::before, .divider::after { content: ""; width: 90rpx; height: 1rpx; margin: 0 18rpx; background: #e5e9e6; }
 .voice-hint { display: block; color: #71807b; margin-bottom: 18rpx; font-size: 28rpx; }
 .voice-btn { min-height: 100rpx; border-radius: 50rpx; background: #52796f !important; color: #fff !important; font-size: 34rpx; }
 .voice-btn.listening { background: #d07a68 !important; }

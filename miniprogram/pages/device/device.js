@@ -2,11 +2,13 @@ const deviceService = require("../../services/device");
 Page({
   data: { loading: true, operating: false, device: {} },
   onShow() { this.loadDevice(); },
+  onPullDownRefresh() { this.loadDevice(); },
   async loadDevice() {
     try {
       const result = await deviceService.getDevice();
       this.setData({ device: result.data.device, loading: false });
     } catch (error) { this.showError(error); }
+    finally { wx.stopPullDownRefresh(); }
   },
   async toggleSocialMode(event) {
     const enabled = event.detail.value;
@@ -15,7 +17,19 @@ Page({
     catch (error) { this.setData({ "device.socialMode": !enabled }); this.showError(error); }
   },
   async bindDevice() { await this.runDeviceAction(deviceService.bindDevice, "设备绑定成功"); },
-  async disconnectDevice() { await this.runDeviceAction(deviceService.disconnectDevice, "设备已断开"); },
+  goBleDebug() { wx.navigateTo({ url: "/pages/ble-debug/ble-debug" }); },
+  disconnectDevice() {
+    if (this.data.operating) return;
+    wx.showModal({
+      title: "断开设备",
+      content: "断开后将暂时无法接收挂件状态，确定继续吗？",
+      confirmText: "断开",
+      confirmColor: "#C06052",
+      success: result => {
+        if (result.confirm) this.runDeviceAction(deviceService.disconnectDevice, "设备已断开");
+      }
+    });
+  },
   async runDeviceAction(action, successText) {
     if (this.data.operating) return;
     this.setData({ operating: true });

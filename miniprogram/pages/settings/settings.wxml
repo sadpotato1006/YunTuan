@@ -8,6 +8,7 @@
   <view class="card list-card links">
     <view class="link-item" bindtap="showPrivacy"><text>隐私设置</text><text class="arrow">›</text></view>
     <view class="link-item" bindtap="showAbout"><text>关于云团</text><text class="arrow">›</text></view>
+    <view class="link-item danger-link" bindtap="clearLocalData"><text>清除本地数据</text><text class="arrow">›</text></view>
   </view>
   <view class="version">云团 · 温暖常伴左右</view>
 </view>

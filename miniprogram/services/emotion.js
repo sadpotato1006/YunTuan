@@ -3,10 +3,30 @@ const request = require("../utils/request");
 const callCloudFunction = require("../utils/cloud");
 const mock = require("../mock/emotion");
 
-function getEmotionRecords() {
-  if (config.backendMode === "mock") return mock.getEmotionRecords();
-  if (config.backendMode === "cloud") return callCloudFunction("emotion", { action: "getEmotionRecords" });
-  return request({ url: "/emotions" });
+function invoke(action, mockFn, httpOptions, data) {
+  const mode = config.getBackendMode("emotion");
+  if (mode === "mock") return mockFn();
+  if (mode === "cloud") return callCloudFunction("emotion", Object.assign({ action }, data || {}));
+  if (mode === "http") return request(httpOptions);
+  return Promise.reject(new Error(`未知的情绪后端模式：${mode}`));
 }
 
-module.exports = { getEmotionRecords };
+function getEmotionRecords() {
+  return invoke("getEmotionRecords", mock.getEmotionRecords, { url: "/emotions" });
+}
+function getEmotionOptions() {
+  return invoke("getEmotionOptions", mock.getEmotionOptions, { url: "/emotions/options" });
+}
+function getEmotionSummary() {
+  return invoke("getEmotionSummary", mock.getEmotionSummary, { url: "/emotions/latest" });
+}
+function addEmotionRecord(name) {
+  return invoke(
+    "addEmotionRecord",
+    () => mock.addEmotionRecord(name),
+    { url: "/emotions", method: "POST", data: { name } },
+    { name }
+  );
+}
+
+module.exports = { getEmotionRecords, getEmotionOptions, getEmotionSummary, addEmotionRecord };
