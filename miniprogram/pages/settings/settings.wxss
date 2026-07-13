@@ -1,0 +1,7 @@
+.settings-title { margin: 14rpx 4rpx 32rpx; }
+.list-card { padding: 0 32rpx; }
+.setting-item, .link-item { min-height: 126rpx; display: flex; align-items: center; justify-content: space-between; border-bottom: 1rpx solid #edf0ed; }
+.setting-item:last-child, .link-item:last-child { border-bottom: 0; }
+.setting-item text { display: block; color: #7b8883; font-size: 26rpx; margin-top: 8rpx; }
+.arrow { color: #99a39f; font-size: 50rpx; }
+.version { text-align: center; color: #929c98; font-size: 26rpx; margin-top: 50rpx; }

@@ -1,0 +1,10 @@
+.device-card { text-align: center; padding: 48rpx 36rpx; }
+.device-mark { width: 120rpx; height: 120rpx; margin: 0 auto 24rpx; border-radius: 50%; background: #dfece5; color: #52796f; display: flex; align-items: center; justify-content: center; font-size: 50rpx; }
+.connection { margin: 18rpx 0 30rpx; color: #999; }
+.connection.connected { color: #5c9968; }
+.battery-wrap { width: 80%; height: 24rpx; margin: auto; background: #e8ece9; border-radius: 20rpx; overflow: hidden; }
+.battery-fill { height: 100%; background: #77a47b; border-radius: 20rpx; }
+.battery-text { display: block; margin-top: 14rpx; color: #60706b; }
+.setting-row { display: flex; justify-content: space-between; align-items: center; }
+.setting-row .section-title { margin-bottom: 8rpx; }
+.ble-tip { text-align: center; color: #89938f; font-size: 27rpx; margin-top: 28rpx; }

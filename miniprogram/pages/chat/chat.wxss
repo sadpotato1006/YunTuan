@@ -1,0 +1,13 @@
+.chat-page { height: 100vh; display: flex; flex-direction: column; background: #f5f7f3; }
+.messages { flex: 1; height: 0; padding: 28rpx; box-sizing: border-box; }
+.message-row { display: flex; margin: 22rpx 0; }
+.message-row.user { justify-content: flex-end; }
+.bubble { max-width: 76%; padding: 24rpx 28rpx; border-radius: 24rpx 24rpx 24rpx 6rpx; background: #fff; line-height: 1.65; font-size: 32rpx; }
+.user .bubble { background: #608d81; color: #fff; border-radius: 24rpx 24rpx 6rpx 24rpx; }
+.thinking { color: #71807b; }
+.chat-bottom { height: 30rpx; }
+.voice-panel { background: #fff; padding: 24rpx 36rpx 40rpx; text-align: center; box-shadow: 0 -8rpx 24rpx rgba(40,60,50,.05); }
+.voice-hint { display: block; color: #71807b; margin-bottom: 18rpx; font-size: 28rpx; }
+.voice-btn { min-height: 100rpx; border-radius: 50rpx; background: #52796f !important; color: #fff !important; font-size: 34rpx; }
+.voice-btn.listening { background: #d07a68 !important; }
+.voice-btn::after { border: 0; }

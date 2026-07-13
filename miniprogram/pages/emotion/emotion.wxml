@@ -1,0 +1,12 @@
+<view class="page">
+  <view class="header"><view class="title">最近的心情</view><text class="muted">每一种感受，都值得被温柔看见</text></view>
+  <view wx:if="{{loading}}" class="loading">正在整理情绪记录…</view>
+  <view wx:elif="{{records.length === 0}}" class="empty card"><view class="empty-icon">♡</view><view>还没有情绪记录</view><text>与云团聊聊天后，这里会出现记录</text></view>
+  <view wx:else>
+    <view wx:for="{{records}}" wx:key="id" class="record card">
+      <view class="record-top"><text class="date">{{item.date}}</text><text class="score">{{item.score}} 分</text></view>
+      <view class="emotion-name">{{item.name}}</view>
+      <text class="note">{{item.note}}</text>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,13 @@
+.hero { padding-top: 44rpx; background: linear-gradient(145deg, #edf4ed, #fffaf0); }
+.eyebrow { color: #52796f; font-size: 28rpx; letter-spacing: 4rpx; }
+.title { margin-top: 16rpx; }
+.device-row { display: flex; align-items: center; margin-top: 36rpx; color: #60706b; font-size: 29rpx; }
+.status-dot { width: 18rpx; height: 18rpx; border-radius: 50%; background: #aaa; margin-right: 12rpx; }
+.status-dot.online { background: #65a76f; }
+.battery { margin-left: auto; }
+.chat-btn { margin: 32rpx 0; }
+.care-card { border-left: 8rpx solid #e6b566; }
+.care-text { line-height: 1.8; color: #52625d; }
+.quick-grid { display: flex; gap: 18rpx; }
+.quick-item { flex: 1; min-height: 150rpx; background: #fff; border-radius: 20rpx; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 28rpx; }
+.quick-icon { font-size: 46rpx; color: #52796f; margin-bottom: 10rpx; }

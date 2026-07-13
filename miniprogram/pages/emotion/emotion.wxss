@@ -1,0 +1,9 @@
+.header { margin: 12rpx 4rpx 36rpx; }
+.header .muted { display: block; margin-top: 12rpx; font-size: 28rpx; }
+.record { border-left: 8rpx solid #8aafa0; }
+.record-top { display: flex; justify-content: space-between; color: #71807b; font-size: 28rpx; }
+.score { color: #52796f; font-weight: 600; }
+.emotion-name { font-size: 38rpx; font-weight: 600; margin: 18rpx 0 12rpx; }
+.note { color: #60706b; line-height: 1.6; }
+.empty-icon { font-size: 70rpx; color: #8aafa0; }
+.empty text { display: block; margin-top: 16rpx; font-size: 28rpx; }

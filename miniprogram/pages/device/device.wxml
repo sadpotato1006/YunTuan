@@ -1,0 +1,19 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="loading">正在读取设备信息…</view>
+  <block wx:else>
+    <view class="device-card card">
+      <view class="device-mark">云</view>
+      <view class="title">{{device.name}}</view>
+      <view class="connection {{device.connected ? 'connected' : ''}}">{{device.connected ? '● 已连接' : '● 未连接'}}</view>
+      <view class="battery-wrap"><view class="battery-fill" style="width: {{device.battery}}%"></view></view>
+      <text class="battery-text">剩余电量 {{device.battery}}%</text>
+    </view>
+    <view class="card setting-row">
+      <view><view class="section-title">社交模式</view><text class="muted">开启后可接收附近互动提醒</text></view>
+      <switch checked="{{device.socialMode}}" color="#52796F" bindchange="toggleSocialMode" />
+    </view>
+    <button wx:if="{{!device.connected}}" class="primary-btn" loading="{{operating}}" bindtap="bindDevice">绑定设备</button>
+    <button wx:else class="secondary-btn" loading="{{operating}}" bindtap="disconnectDevice">断开设备</button>
+    <view class="ble-tip">当前为模拟设备数据，暂未启用蓝牙通信。</view>
+  </block>
+</view>

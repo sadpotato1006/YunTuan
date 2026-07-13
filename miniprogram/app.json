@@ -1,0 +1,30 @@
+{
+  "pages": [
+    "pages/home/home",
+    "pages/chat/chat",
+    "pages/device/device",
+    "pages/emotion/emotion",
+    "pages/settings/settings"
+  ],
+  "window": {
+    "navigationBarTitleText": "云团",
+    "navigationBarBackgroundColor": "#F7F3EA",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F6F7F2",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#777777",
+    "selectedColor": "#52796F",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/home/home", "text": "首页" },
+      { "pagePath": "pages/device/device", "text": "设备" },
+      { "pagePath": "pages/emotion/emotion", "text": "情绪" },
+      { "pagePath": "pages/settings/settings", "text": "设置" }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

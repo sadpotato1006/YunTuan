@@ -1,0 +1,24 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="loading">正在准备今日信息…</view>
+  <block wx:else>
+    <view class="hero card">
+      <text class="eyebrow">云团陪伴</text>
+      <view class="title">{{greeting}}</view>
+      <view class="device-row">
+        <text class="status-dot {{device.connected ? 'online' : ''}}"></text>
+        <text>{{device.connected ? '设备已连接' : '设备未连接'}}</text>
+        <text class="battery">电量 {{device.battery}}%</text>
+      </view>
+    </view>
+    <button class="primary-btn chat-btn" bindtap="startChat">开始陪伴对话</button>
+    <view class="card care-card">
+      <view class="section-title">今日关怀</view>
+      <text class="care-text">{{careTip}}</text>
+    </view>
+    <view class="quick-grid">
+      <view class="quick-item" bindtap="goDevice"><text class="quick-icon">⌁</text><text>我的设备</text></view>
+      <view class="quick-item" bindtap="goEmotion"><text class="quick-icon">♡</text><text>情绪记录</text></view>
+      <view class="quick-item" bindtap="goSettings"><text class="quick-icon">⚙</text><text>应用设置</text></view>
+    </view>
+  </block>
+</view>
