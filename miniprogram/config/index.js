@@ -1,11 +1,11 @@
 const config = {
-  // 当前调用已部署的 chat 云函数；可选值：mock、cloud、http。
+  // 通用后端可选值：mock、cloud、http；设备业务还支持本机 ble 模式。
   backendMode: "cloud",
 
-  // 各业务可以独立覆盖默认模式：目前仅聊天使用云函数，其余功能继续使用 Mock。
+  // 设备使用本机 BLE，聊天使用云函数，情绪功能暂时保留 Mock。
   serviceBackendModes: {
     chat: "cloud",
-    device: "mock",
+    device: "ble",
     emotion: "mock"
   },
 

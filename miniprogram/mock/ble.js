@@ -1,15 +1,11 @@
-const UUIDS = {
-  batteryService: "0000180F-0000-1000-8000-00805F9B34FB",
-  batteryLevel: "00002A19-0000-1000-8000-00805F9B34FB",
-  deviceInfoService: "0000180A-0000-1000-8000-00805F9B34FB",
-  modelNumber: "00002A24-0000-1000-8000-00805F9B34FB",
-  firmwareRevision: "00002A26-0000-1000-8000-00805F9B34FB",
-  hardwareRevision: "00002A27-0000-1000-8000-00805F9B34FB",
-  controlService: "A92B1000-6E3B-4C5D-9F21-4A7C2D8E1B30",
-  commandRx: "A92B1001-6E3B-4C5D-9F21-4A7C2D8E1B30",
-  eventTx: "A92B1002-6E3B-4C5D-9F21-4A7C2D8E1B30",
-  status: "A92B1003-6E3B-4C5D-9F21-4A7C2D8E1B30"
-};
+const config = require("../config/ble");
+const protocol = require("../utils/yuntuan-protocol");
+
+const UUIDS = Object.assign({ status: config.UUIDS.protocolInfo }, config.UUIDS);
+const startedAt = Date.now();
+let battery = 78;
+let chargingState = 1;
+let socialMode = true;
 
 function createServices() {
   return [
@@ -45,10 +41,7 @@ function createServices() {
           writeNoResponse: true
         }),
         createCharacteristic(UUIDS.eventTx, "Event TX（模拟通知）", { notify: true }),
-        createCharacteristic(UUIDS.status, "Protocol Status（模拟状态）", {
-          read: true,
-          notify: true
-        })
+        createCharacteristic(UUIDS.protocolInfo, "Protocol Info（模拟协议）", { read: true })
       ]
     }
   ];
@@ -81,30 +74,67 @@ function readValue(characteristicId) {
   const normalized = normalize(characteristicId);
   if (same(normalized, UUIDS.batteryLevel)) return new Uint8Array([78]).buffer;
   if (same(normalized, UUIDS.modelNumber)) return asciiToBuffer("YT-SIM-01");
-  if (same(normalized, UUIDS.firmwareRevision)) return asciiToBuffer("0.1.0");
+  if (same(normalized, UUIDS.firmwareRevision)) return asciiToBuffer("0.2.0");
   if (same(normalized, UUIDS.hardwareRevision)) return asciiToBuffer("SIM-A1");
-  if (same(normalized, UUIDS.status)) return new Uint8Array([1, 0, 78, 1]).buffer;
+  if (same(normalized, UUIDS.protocolInfo)) return new Uint8Array([1, 0, 0x1F, 0, 0, 0]).buffer;
   throw new Error("这个模拟特征值没有可读取数据");
 }
 
 function createWriteResponse(value) {
-  const input = new Uint8Array(value);
-  const response = new Uint8Array(Math.min(input.length, 17) + 2);
-  response[0] = 0x00;
-  response[1] = input.length;
-  response.set(input.slice(0, 17), 2);
+  const request = protocol.decodeFrame(value);
+  if (request.isResponse || request.isEvent) throw new Error("模拟设备只接受请求帧");
+  let statusCode = config.STATUS_CODES.OK;
+  let data = new Uint8Array(0);
+
+  if (request.command === config.COMMANDS.HELLO) {
+    if (request.payload.length) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
+    data = new Uint8Array([1, 0, 0x1F, 0, 0, 0]);
+  } else if (request.command === config.COMMANDS.GET_STATUS) {
+    if (request.payload.length) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
+    data = createStatusData();
+  } else if (request.command === config.COMMANDS.SET_SOCIAL_MODE) {
+    if (request.payload.length !== 1 || (request.payload[0] !== 0 && request.payload[0] !== 1)) {
+      statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
+    } else {
+      socialMode = request.payload[0] === 1;
+      data = new Uint8Array([socialMode ? 1 : 0]);
+    }
+  } else if (request.command === config.COMMANDS.FIND_DEVICE) {
+    if (request.payload.length !== 3) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
+  } else if (request.command === config.COMMANDS.SET_TIME) {
+    if (request.payload.length !== 4) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
+  } else if (request.command === config.COMMANDS.PING) {
+    if (request.payload.length !== 4) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
+    else data = request.payload;
+  } else {
+    statusCode = config.STATUS_CODES.UNKNOWN_COMMAND;
+  }
+
+  if (statusCode !== config.STATUS_CODES.OK) data = new Uint8Array(0);
   return {
     serviceId: UUIDS.controlService,
     characteristicId: UUIDS.eventTx,
-    value: response.buffer
+    value: protocol.createResponse(request.command, request.sequence, statusCode, data)
   };
 }
 
 function createNotifyValue(characteristicId) {
   if (same(characteristicId, UUIDS.eventTx)) {
-    return new Uint8Array([0x20, 0x01, 78]).buffer;
+    return protocol.createEvent(
+      config.COMMANDS.STATUS_CHANGED,
+      new Uint8Array([battery, chargingState, socialMode ? 1 : 0])
+    );
   }
   return readValue(characteristicId);
+}
+
+function createStatusData() {
+  const data = new Uint8Array(7);
+  data[0] = battery;
+  data[1] = chargingState;
+  data[2] = socialMode ? 1 : 0;
+  protocol.writeUint32LE(data, 3, Math.floor((Date.now() - startedAt) / 1000));
+  return data;
 }
 
 function asciiToBuffer(text) {

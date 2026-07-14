@@ -39,6 +39,55 @@ function sendMessage(message, audioFilePath) {
   return Promise.reject(new Error(`未知的聊天后端模式：${mode}`));
 }
 
+function transcribeAudio(audioFilePath, voiceFormat) {
+  if (!audioFilePath) return Promise.reject(new Error("没有可识别的录音"));
+
+  const format = voiceFormat || "mp3";
+  if (format !== "mp3" && format !== "wav") {
+    return Promise.reject(new Error("暂不支持这种录音格式"));
+  }
+
+  const mode = config.getBackendMode("chat");
+  if (mode !== "cloud") {
+    return Promise.reject(new Error("语音识别需要启用云开发模式"));
+  }
+  if (!wx.getFileSystemManager) {
+    return Promise.reject(new Error("当前微信版本不支持读取录音"));
+  }
+
+  return new Promise((resolve, reject) => {
+    wx.getFileSystemManager().readFile({
+      filePath: audioFilePath,
+      encoding: "base64",
+      success: async result => {
+        try {
+          resolve(await callCloudFunction("chat", {
+            action: "transcribe",
+            audioBase64: result.data,
+            voiceFormat: format
+          }));
+        } catch (error) {
+          reject(error);
+        }
+      },
+      fail: error => {
+        console.error("读取录音文件失败：", error);
+        reject(new Error("读取录音失败，请重试"));
+      }
+    });
+  });
+}
+
+function synthesizeSpeech(text) {
+  const content = typeof text === "string" ? text.trim() : "";
+  if (!content) return Promise.reject(new Error("没有可朗读的文字"));
+  const mode = config.getBackendMode("chat");
+  if (mode !== "cloud") {
+    return Promise.reject(new Error("语音合成需要启用云开发模式"));
+  }
+  return callCloudFunction("chat", { action: "synthesize", text: content });
+}
+
 function getLocalMessages() {
   if (typeof wx === "undefined" || typeof wx.getStorageSync !== "function") return [];
   const saved = wx.getStorageSync(CHAT_HISTORY_KEY);
@@ -59,4 +108,11 @@ async function clearMessages() {
   return mock.getMessages();
 }
 
-module.exports = { getMessages, sendMessage, saveMessages, clearMessages };
+module.exports = {
+  getMessages,
+  sendMessage,
+  transcribeAudio,
+  synthesizeSpeech,
+  saveMessages,
+  clearMessages
+};

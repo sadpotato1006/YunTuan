@@ -22,6 +22,7 @@ const initialState = {
 
 let state = Object.assign({}, initialState);
 let subscribers = [];
+let valueSubscribers = [];
 let scanTimer = null;
 let logSequence = 0;
 let unsubscribeDeviceFound = null;
@@ -86,6 +87,14 @@ function subscribe(listener) {
   listener(getState());
   return function unsubscribe() {
     subscribers = subscribers.filter(item => item !== listener);
+  };
+}
+
+function subscribeValues(listener) {
+  if (typeof listener !== "function") throw new Error("蓝牙数据监听器必须是函数");
+  valueSubscribers.push(listener);
+  return function unsubscribe() {
+    valueSubscribers = valueSubscribers.filter(item => item !== listener);
   };
 }
 
@@ -205,6 +214,20 @@ function handleAdapterChange(result) {
 
 function handleValueChange(result) {
   if (!result || result.deviceId !== state.deviceId || !result.value) return;
+
+  // 音频分片频率高，不能逐包转十六进制、写调试日志并触发整页状态刷新。
+  // 音频 service 会自行做序号、进度和 CRC 校验。
+  if (sameUuid(result.characteristicId, config.UUIDS.audioData)) {
+    valueSubscribers.slice().forEach(listener => {
+      try {
+        listener(result);
+      } catch (error) {
+        addLog("ERROR", "上层音频数据处理失败", error.message);
+      }
+    });
+    return;
+  }
+
   const hex = bufferUtils.arrayBufferToHex(result.value);
   const text = bufferUtils.toPrintableText(result.value);
   const meaning = getStandardValueMeaning(result.characteristicId, result.value);
@@ -217,6 +240,13 @@ function handleValueChange(result) {
     lastUpdatedAt: updatedAt
   });
   addLog("RX", `收到 ${shortUuid(result.characteristicId)} 的数据`, `${hex}${text ? ` | UTF-8: ${text}` : ""}`);
+  valueSubscribers.slice().forEach(listener => {
+    try {
+      listener(Object.assign({}, result, { hex, text, meaning, updatedAt }));
+    } catch (error) {
+      addLog("ERROR", "上层蓝牙数据处理失败", error.message);
+    }
+  });
 }
 
 function getStandardValueMeaning(characteristicId, value) {
@@ -247,7 +277,11 @@ async function startScan(options) {
   addLog("SCAN", "开始搜索附近 BLE 设备");
 
   try {
-    await ble.startDiscovery({ allowDuplicatesKey: true, interval: 500 });
+    await ble.startDiscovery({
+      services: Array.isArray(scanOptions.services) ? scanOptions.services : [],
+      allowDuplicatesKey: true,
+      interval: 500
+    });
     const timeout = scanOptions.timeout || config.scanTimeout;
     scanTimer = setTimeout(() => { stopScan().catch(() => {}); }, timeout);
     return getState();
@@ -407,7 +441,13 @@ async function setCharacteristicNotify(serviceId, characteristicId, enabled) {
 }
 
 async function writeCharacteristic(serviceId, characteristicId, hexInput, writeType) {
+  const value = bufferUtils.hexToArrayBuffer(hexInput);
+  return writeBuffer(serviceId, characteristicId, value, writeType);
+}
+
+async function writeBuffer(serviceId, characteristicId, value, writeType, options) {
   requireConnected();
+  const writeOptions = options || {};
   const characteristic = findCharacteristic(serviceId, characteristicId);
   if (!characteristic || !characteristic.canWrite) throw new Error("这个特征值不支持写入");
 
@@ -417,13 +457,16 @@ async function writeCharacteristic(serviceId, characteristicId, hexInput, writeT
     throw new Error("这个特征值不支持 WriteNoResponse");
   }
 
-  const value = bufferUtils.hexToArrayBuffer(hexInput);
-  const hex = bufferUtils.arrayBufferToHex(value);
-  addLog("TX", `向 ${shortUuid(characteristicId)} 写入数据`, `${hex} | ${selectedType}`);
+  const bytes = bufferUtils.toUint8Array(value);
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  if (!writeOptions.quiet) {
+    const hex = bufferUtils.arrayBufferToHex(value);
+    addLog("TX", `向 ${shortUuid(characteristicId)} 写入数据`, `${hex} | ${selectedType}`);
+  }
   try {
     if (state.simulated) {
-      const response = bleMock.createWriteResponse(value);
-      addLog("WRITE", "模拟 BLE 写入成功", shortUuid(characteristicId));
+      const response = bleMock.createWriteResponse(buffer);
+      if (!writeOptions.quiet) addLog("WRITE", "模拟 BLE 写入成功", shortUuid(characteristicId));
       setTimeout(() => handleValueChange({
         deviceId: state.deviceId,
         serviceId: response.serviceId,
@@ -436,13 +479,37 @@ async function writeCharacteristic(serviceId, characteristicId, hexInput, writeT
       deviceId: state.deviceId,
       serviceId,
       characteristicId,
-      value,
+      value: buffer,
       writeType: selectedType
     });
-    addLog("WRITE", "微信 BLE 写入接口返回成功", shortUuid(characteristicId));
+    if (!writeOptions.quiet) addLog("WRITE", "微信 BLE 写入接口返回成功", shortUuid(characteristicId));
   } catch (error) {
     addLog("ERROR", `写入 ${shortUuid(characteristicId)} 失败`, error.message);
     throw error;
+  }
+}
+
+async function negotiateMTU(preferredMTU) {
+  requireConnected();
+  if (state.simulated) return 247;
+
+  const requested = Number.isInteger(preferredMTU) ? preferredMTU : 247;
+  try {
+    await ble.setMTU(state.deviceId, requested);
+    addLog("MTU", "已请求协商 BLE MTU", String(requested));
+  } catch (error) {
+    // iOS 由系统决定 MTU；部分旧版微信也没有 setBLEMTU，继续读取实际值即可。
+    addLog("MTU", "当前系统未主动设置 MTU", error.message);
+  }
+
+  try {
+    const result = await ble.getMTU(state.deviceId, "write");
+    const mtu = result && Number.isInteger(result.mtu) ? result.mtu : 23;
+    addLog("MTU", "当前 BLE MTU", String(mtu));
+    return mtu;
+  } catch (error) {
+    addLog("MTU", "无法读取 MTU，按最小值兼容", error.message);
+    return 23;
   }
 }
 
@@ -489,6 +556,9 @@ function getServiceName(uuid) {
   if (normalized === "180A" || normalized.includes("0000180A00001000800000805F9B34FB")) return "Device Information（设备信息）";
   if (normalized === "1800" || normalized.includes("0000180000001000800000805F9B34FB")) return "Generic Access";
   if (normalized === "1801" || normalized.includes("0000180100001000800000805F9B34FB")) return "Generic Attribute";
+  if (sameUuid(uuid, config.UUIDS.controlService)) return "Yuntuan Control（云团控制）";
+  if (sameUuid(uuid, config.UUIDS.audioService)) return "Yuntuan Audio Transfer（挂件语音）";
+  if (sameUuid(uuid, config.UUIDS.ttsService)) return "Yuntuan Speech Playback（语音播放）";
   return "自定义/其他服务";
 }
 
@@ -502,6 +572,15 @@ function getCharacteristicName(uuid) {
     "2A27": "Hardware Revision（硬件版本）",
     "2A00": "Device Name（设备名称）"
   };
+  if (sameUuid(uuid, config.UUIDS.commandRx)) return "Command RX（命令写入）";
+  if (sameUuid(uuid, config.UUIDS.eventTx)) return "Event TX（响应与事件）";
+  if (sameUuid(uuid, config.UUIDS.protocolInfo)) return "Protocol Info（协议信息）";
+  if (sameUuid(uuid, config.UUIDS.audioControl)) return "Audio Control（音频流控）";
+  if (sameUuid(uuid, config.UUIDS.audioData)) return "Audio Data（音频分片）";
+  if (sameUuid(uuid, config.UUIDS.audioStatus)) return "Audio Status（录音状态）";
+  if (sameUuid(uuid, config.UUIDS.ttsControl)) return "TTS Control（播放控制）";
+  if (sameUuid(uuid, config.UUIDS.ttsData)) return "TTS Data（播放音频分片）";
+  if (sameUuid(uuid, config.UUIDS.ttsStatus)) return "TTS Status（播放状态）";
   const shortId = Object.keys(names).find(id => normalized === id || normalized.includes(`0000${id}00001000800000805F9B34FB`));
   return shortId ? names[shortId] : "自定义/其他特征值";
 }
@@ -574,8 +653,11 @@ module.exports = {
   readCharacteristic,
   setCharacteristicNotify,
   writeCharacteristic,
+  writeBuffer,
+  negotiateMTU,
   getState,
   subscribe,
+  subscribeValues,
   clearLogs,
   getLogText,
   dispose

@@ -6,8 +6,34 @@
 .battery-fill { height: 100%; background: #77a47b; border-radius: 20rpx; }
 .battery-text { display: block; margin-top: 14rpx; color: #60706b; }
 .low-battery { display: block; margin-top: 12rpx; color: #bd6757; font-size: 28rpx; }
+.protocol-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 12rpx; margin-top: 24rpx; }
+.protocol-tags text { padding: 8rpx 16rpx; border-radius: 18rpx; background: #edf3ef; color: #52796f; font-size: 24rpx; }
+.error-text { display: block; margin-top: 18rpx; color: #bd6757; font-size: 27rpx; }
+.event-text { display: block; margin-top: 16rpx; color: #52796f; font-size: 27rpx; }
+.device-info-card { padding-top: 10rpx; padding-bottom: 10rpx; }
+.info-row { display: flex; justify-content: space-between; gap: 24rpx; padding: 22rpx 0; border-bottom: 1rpx solid #edf0ee; font-size: 29rpx; }
+.info-row:last-child { border-bottom: 0; }
+.info-row text:first-child { color: #71807b; }
+.info-row text:last-child { text-align: right; word-break: break-all; }
 .setting-row { display: flex; justify-content: space-between; align-items: center; }
 .setting-row .section-title { margin-bottom: 8rpx; }
+.scan-actions { display: flex; flex-direction: column; gap: 18rpx; margin-bottom: 34rpx; }
+.scan-btn { width: 100%; margin: 0; }
+.simulator-btn { width: 100%; min-height: 82rpx; margin: 0; border-radius: 20rpx; background: #fff8e8 !important; color: #8b6b2e !important; font-size: 29rpx; }
+.simulator-btn::after { border-color: #ead9b2; }
+.nearby-title { margin-top: 8rpx; }
+.nearby-device { display: flex; align-items: center; gap: 20rpx; }
+.nearby-info { flex: 1; min-width: 0; }
+.nearby-name, .nearby-id, .nearby-rssi { display: block; }
+.nearby-name { font-weight: 600; }
+.nearby-id { margin-top: 8rpx; color: #87938f; font-size: 23rpx; word-break: break-all; }
+.nearby-rssi { margin-top: 8rpx; color: #71807b; font-size: 26rpx; }
+.connect-btn { width: 142rpx; min-height: 76rpx; margin: 0; padding: 0; border-radius: 18rpx; background: #52796f !important; color: #fff !important; font-size: 29rpx; }
+.connect-btn::after { border: 0; }
+.device-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 18rpx; margin-bottom: 22rpx; }
+.device-actions button { width: 100%; margin: 0; font-size: 29rpx; }
+.disconnect-btn { min-height: 84rpx; border-radius: 20rpx; background: #fff0ed !important; color: #a95549 !important; font-size: 30rpx; }
+.disconnect-btn::after { border-color: #e7c3bc; }
 .debug-btn { min-height: 84rpx; margin-top: 22rpx; border-radius: 20rpx; background: #fff !important; color: #52796f !important; font-size: 29rpx; }
 .debug-btn::after { border-color: #b8c9c3; }
 .ble-tip { text-align: center; color: #89938f; font-size: 27rpx; margin-top: 18rpx; }

@@ -1,8 +1,76 @@
 const deviceService = require("../../services/device");
 Page({
-  data: { loading: true, operating: false, device: {} },
-  onShow() { this.loadDevice(); },
-  onPullDownRefresh() { this.loadDevice(); },
+  data: {
+    loading: true,
+    operating: false,
+    connectingDeviceId: "",
+    discovering: false,
+    available: false,
+    statusText: "正在初始化蓝牙…",
+    nearbyDevices: [],
+    device: {
+      name: "云团智能挂件",
+      connected: false,
+      ready: false,
+      battery: null,
+      socialMode: false
+    }
+  },
+
+  onLoad() {
+    this.unsubscribe = deviceService.subscribe(state => {
+      this.setData({
+        discovering: state.discovering,
+        available: state.available,
+        statusText: state.statusText,
+        nearbyDevices: state.devices || [],
+        device: Object.assign({}, this.data.device, {
+          id: state.deviceId,
+          name: state.name,
+          connected: state.connected,
+          connecting: state.connecting,
+          ready: state.ready,
+          simulated: state.simulated,
+          battery: state.battery,
+          chargingState: state.chargingState,
+          socialMode: state.socialMode,
+          uptime: state.uptime,
+          protocolMajor: state.protocolMajor,
+          protocolMinor: state.protocolMinor,
+          securityMode: state.securityMode,
+          modelNumber: state.modelNumber,
+          firmwareRevision: state.firmwareRevision,
+          hardwareRevision: state.hardwareRevision,
+          serialNumber: state.serialNumber,
+          errorMessage: state.errorMessage,
+          lastEventText: state.lastEventText
+        })
+      });
+    });
+  },
+
+  async onShow() {
+    await this.initializeDevice();
+    await this.loadDevice();
+  },
+
+  onUnload() {
+    if (this.unsubscribe) this.unsubscribe();
+  },
+
+  async initializeDevice() {
+    if (this.data.device.connected) return;
+    try {
+      await deviceService.initialize();
+    } catch (error) {
+      this.showError(error);
+    }
+  },
+
+  onPullDownRefresh() {
+    this.refreshStatus();
+  },
+
   async loadDevice() {
     try {
       const result = await deviceService.getDevice();
@@ -10,14 +78,113 @@ Page({
     } catch (error) { this.showError(error); }
     finally { wx.stopPullDownRefresh(); }
   },
-  async toggleSocialMode(event) {
-    const enabled = event.detail.value;
-    this.setData({ "device.socialMode": enabled });
-    try { await deviceService.setSocialMode(enabled); }
-    catch (error) { this.setData({ "device.socialMode": !enabled }); this.showError(error); }
+
+  async refreshStatus() {
+    if (!this.data.device.ready) {
+      await this.loadDevice();
+      return;
+    }
+    try {
+      const result = await deviceService.refreshStatus();
+      this.setData({ device: result.data.device });
+      wx.showToast({ title: "状态已刷新", icon: "success" });
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      wx.stopPullDownRefresh();
+    }
   },
-  async bindDevice() { await this.runDeviceAction(deviceService.bindDevice, "设备绑定成功"); },
+
+  async startScan() {
+    if (this.data.operating) return;
+    this.setData({ operating: true });
+    try {
+      await deviceService.startScan();
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      this.setData({ operating: false });
+    }
+  },
+
+  async stopScan() {
+    try { await deviceService.stopScan(); }
+    catch (error) { this.showError(error); }
+  },
+
+  async connectDevice(event) {
+    if (this.data.operating) return;
+    const deviceId = event.currentTarget.dataset.deviceId;
+    this.setData({ operating: true, connectingDeviceId: deviceId });
+    try {
+      const result = await deviceService.bindDevice(deviceId);
+      this.setData({ device: result.data.device });
+      wx.showToast({ title: "挂件连接成功", icon: "success" });
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      this.setData({ operating: false, connectingDeviceId: "" });
+    }
+  },
+
+  async loadSimulator() {
+    if (this.data.operating) return;
+    this.setData({ operating: true });
+    try {
+      const result = await deviceService.loadSimulator();
+      this.setData({ device: result.data.device });
+      wx.showToast({ title: "模拟挂件已连接", icon: "success" });
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      this.setData({ operating: false });
+    }
+  },
+
+  async toggleSocialMode(event) {
+    if (!this.data.device.ready || this.data.operating) return;
+    const enabled = event.detail.value;
+    const previous = this.data.device.socialMode;
+    this.setData({ operating: true });
+    try {
+      const result = await deviceService.setSocialMode(enabled);
+      this.setData({ device: result.data.device });
+    } catch (error) {
+      this.setData({ "device.socialMode": previous });
+      this.showError(error);
+    } finally {
+      this.setData({ operating: false });
+    }
+  },
+
+  async findDevice() {
+    if (!this.data.device.ready || this.data.operating) return;
+    this.setData({ operating: true });
+    try {
+      await deviceService.findDevice();
+      wx.showToast({ title: "已发送振动提醒", icon: "success" });
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      this.setData({ operating: false });
+    }
+  },
+
+  async pingDevice() {
+    if (!this.data.device.ready || this.data.operating) return;
+    this.setData({ operating: true });
+    try {
+      await deviceService.ping();
+      wx.showToast({ title: "通信正常", icon: "success" });
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      this.setData({ operating: false });
+    }
+  },
+
   goBleDebug() { wx.navigateTo({ url: "/pages/ble-debug/ble-debug" }); },
+
   disconnectDevice() {
     if (this.data.operating) return;
     wx.showModal({
@@ -26,19 +193,26 @@ Page({
       confirmText: "断开",
       confirmColor: "#C06052",
       success: result => {
-        if (result.confirm) this.runDeviceAction(deviceService.disconnectDevice, "设备已断开");
+        if (result.confirm) this.runDisconnect();
       }
     });
   },
-  async runDeviceAction(action, successText) {
-    if (this.data.operating) return;
+
+  async runDisconnect() {
     this.setData({ operating: true });
     try {
-      // 页面只调用 service；后续 BLE 连接逻辑集中封装在 device service。
-      const result = await action();
-      this.setData({ device: result.data.device, operating: false });
-      wx.showToast({ title: successText, icon: "success" });
-    } catch (error) { this.setData({ operating: false }); this.showError(error); }
+      const result = await deviceService.disconnectDevice();
+      this.setData({ device: result.data.device });
+      wx.showToast({ title: "设备已断开", icon: "success" });
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      this.setData({ operating: false });
+    }
   },
-  showError(error) { this.setData({ loading: false }); wx.showToast({ title: error.message || "设备操作失败", icon: "none" }); }
+
+  showError(error) {
+    this.setData({ loading: false });
+    wx.showToast({ title: error.message || "设备操作失败", icon: "none", duration: 2600 });
+  }
 });

@@ -1,22 +1,70 @@
 <view class="page">
-  <view wx:if="{{loading}}" class="loading">正在读取设备信息…</view>
-  <block wx:else>
-    <view class="device-card card">
-      <view class="device-mark">云</view>
-      <view class="title">{{device.name}}</view>
-      <view class="connection {{device.connected ? 'connected' : ''}}">{{device.connected ? '● 已连接' : '● 未连接'}}</view>
+  <view class="device-card card">
+    <view class="device-mark">云</view>
+    <view class="title">{{device.name}}</view>
+    <view class="connection {{device.ready ? 'connected' : ''}}">
+      ● {{device.ready ? '设备已就绪' : (device.connected ? '正在初始化协议' : statusText)}}
+    </view>
+    <block wx:if="{{device.battery !== null}}">
       <view class="battery-wrap"><view class="battery-fill" style="width: {{device.battery}}%"></view></view>
       <text class="battery-text">剩余电量 {{device.battery}}%</text>
       <text wx:if="{{device.battery <= 20}}" class="low-battery">电量较低，请及时充电</text>
+    </block>
+    <text wx:else class="battery-text">连接后读取真实电量</text>
+    <view wx:if="{{device.ready}}" class="protocol-tags">
+      <text>协议 {{device.protocolMajor}}.{{device.protocolMinor}}</text>
+      <text>{{device.simulated ? '模拟设备' : '真实设备'}}</text>
+      <text>{{device.securityMode === 0 ? '实验室模式' : '认证模式'}}</text>
+    </view>
+    <text wx:if="{{device.errorMessage}}" class="error-text">{{device.errorMessage}}</text>
+    <text wx:if="{{device.lastEventText}}" class="event-text">{{device.lastEventText}}</text>
+  </view>
+
+  <block wx:if="{{!device.connected}}">
+    <view class="scan-actions">
+      <button wx:if="{{!discovering}}" class="primary-btn scan-btn" disabled="{{operating}}" bindtap="startScan">搜索附近挂件</button>
+      <button wx:else class="secondary-btn scan-btn" bindtap="stopScan">停止搜索</button>
+      <button class="simulator-btn" disabled="{{operating}}" bindtap="loadSimulator">加载模拟挂件</button>
+    </view>
+
+    <view class="section-title nearby-title">附近的云团挂件（{{nearbyDevices.length}}）</view>
+    <view wx:if="{{!nearbyDevices.length}}" class="empty card">
+      {{discovering ? '正在搜索，请把挂件放在手机附近…' : '尚未发现名称以 YT- 开头的挂件'}}
+    </view>
+    <view wx:for="{{nearbyDevices}}" wx:key="deviceId" class="nearby-device card">
+      <view class="nearby-info">
+        <text class="nearby-name">{{item.name}}</text>
+        <text class="nearby-id">{{item.deviceId}}</text>
+        <text class="nearby-rssi">信号 {{item.RSSI}} dBm</text>
+      </view>
+      <button
+        class="connect-btn"
+        loading="{{connectingDeviceId === item.deviceId}}"
+        disabled="{{operating}}"
+        data-device-id="{{item.deviceId}}"
+        bindtap="connectDevice"
+      >连接</button>
+    </view>
+  </block>
+
+  <block wx:if="{{device.ready}}">
+    <view class="card device-info-card">
+      <view class="info-row"><text>设备型号</text><text>{{device.modelNumber}}</text></view>
+      <view class="info-row"><text>固件版本</text><text>{{device.firmwareRevision}}</text></view>
+      <view class="info-row"><text>硬件版本</text><text>{{device.hardwareRevision}}</text></view>
+      <view wx:if="{{device.serialNumber}}" class="info-row"><text>设备序列号</text><text>{{device.serialNumber}}</text></view>
     </view>
     <view class="card setting-row">
-      <view><view class="section-title">社交模式</view><text class="muted">开启后可接收附近互动提醒</text></view>
-      <switch checked="{{device.socialMode}}" color="#52796F" bindchange="toggleSocialMode" />
+      <view><view class="section-title">社交模式</view><text class="muted">状态以挂件返回的结果为准</text></view>
+      <switch checked="{{device.socialMode}}" disabled="{{operating}}" color="#52796F" bindchange="toggleSocialMode" />
     </view>
-    <button wx:if="{{!device.connected}}" class="primary-btn" loading="{{operating}}" bindtap="bindDevice">绑定设备</button>
-    <button wx:else class="secondary-btn" loading="{{operating}}" bindtap="disconnectDevice">断开设备</button>
-    <button class="debug-btn" bindtap="goBleDebug">打开蓝牙联调工具</button>
-    <view class="ble-tip">设备设置已保存在本机。下拉页面可以刷新状态。</view>
-    <view class="ble-tip">当前为模拟设备数据，暂未启用蓝牙通信。</view>
+    <view class="device-actions">
+      <button class="secondary-btn" disabled="{{operating}}" bindtap="findDevice">振动查找挂件</button>
+      <button class="secondary-btn" disabled="{{operating}}" bindtap="pingDevice">测试通信</button>
+    </view>
+    <button class="disconnect-btn" loading="{{operating}}" bindtap="disconnectDevice">断开设备</button>
   </block>
+
+  <button class="debug-btn" bindtap="goBleDebug">打开通用蓝牙联调工具</button>
+  <view class="ble-tip">正式设备页已按云团 BLE v0.2 协议通信，下拉可重新读取设备状态。</view>
 </view>

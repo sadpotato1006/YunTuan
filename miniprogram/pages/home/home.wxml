@@ -7,7 +7,7 @@
       <view class="device-row">
         <text class="status-dot {{device.connected ? 'online' : ''}}"></text>
         <text>{{device.connected ? '设备已连接' : '设备未连接'}}</text>
-        <text class="battery">电量 {{device.battery}}%</text>
+        <text class="battery">电量 {{device.battery === null ? '--' : device.battery}}%</text>
       </view>
     </view>
     <button class="primary-btn chat-btn" bindtap="startChat">开始陪伴对话</button>

@@ -14,6 +14,11 @@
     "backgroundColor": "#F6F7F2",
     "backgroundTextStyle": "dark"
   },
+  "permission": {
+    "scope.record": {
+      "desc": "用于将您说的话转换成文字并发送给云团"
+    }
+  },
   "tabBar": {
     "color": "#777777",
     "selectedColor": "#52796F",
