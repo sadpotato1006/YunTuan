@@ -20,12 +20,12 @@ function getEmotionOptions() {
 function getEmotionSummary() {
   return invoke("getEmotionSummary", mock.getEmotionSummary, { url: "/emotions/latest" });
 }
-function addEmotionRecord(name) {
+function addEmotionRecord(name, note) {
   return invoke(
     "addEmotionRecord",
-    () => mock.addEmotionRecord(name),
-    { url: "/emotions", method: "POST", data: { name } },
-    { name }
+    () => mock.addEmotionRecord(name, note),
+    { url: "/emotions", method: "POST", data: { name, note } },
+    { name, note }
   );
 }
 

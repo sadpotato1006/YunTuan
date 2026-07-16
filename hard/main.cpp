@@ -13,7 +13,7 @@
 #define DEVICE_SN                 "YT01260000000001"
 #define DEVICE_NAME               "YT-000001"
 #define MODEL_NUMBER              "YT-P01"
-#define FIRMWARE_REVISION         "0.4.0"
+#define FIRMWARE_REVISION         "0.4.1"
 #define HARDWARE_REVISION         "A1"
 
 #define BATTERY_SERVICE_UUID      "0000180F-0000-1000-8000-00805F9B34FB"
@@ -85,8 +85,8 @@
 
 // Protocol Info (§5.4)
 #define PROTOCOL_MAJOR            1
-#define PROTOCOL_MINOR            2
-#define CAPABILITIES              0x031F        // v0.2 能力 + AudioUpload + AudioPlayback
+#define PROTOCOL_MINOR            3
+#define CAPABILITIES              0x031F        // Control v1.3 + AudioUpload v2 + AudioPlayback v2
 #define SECURITY_MODE             0             // 实验室模式
 
 // Capability bits (§5.4)
@@ -129,19 +129,20 @@
 #define AUDIO_MAX_SAMPLES         (AUDIO_SAMPLE_RATE * AUDIO_MAX_SECONDS)
 #define AUDIO_BUFFER_CAPACITY     (AUDIO_MAX_SAMPLES / 2)
 #define AUDIO_VAD_THRESHOLD       650           // 平均绝对幅度，需按实机噪声微调
-#define AUDIO_SILENCE_FRAMES      60            // 检测到语音后静音 1.2 秒自动结束
+#define AUDIO_SILENCE_FRAMES      40            // 检测到语音后静音 0.8 秒自动结束
 #define AUDIO_NO_SPEECH_FRAMES    250           // 5 秒无有效语音则取消
 #define AUDIO_WINDOW_PACKETS      8
 #define AUDIO_ACK_TIMEOUT_MS      1800
 #define AUDIO_ACK_MAX_RETRIES     4
 
-#define AUDIO_PROTOCOL_VERSION    1
+#define AUDIO_PROTOCOL_VERSION    2
 #define AUDIO_CODEC_IMA_ADPCM     1
 #define AUDIO_STATUS_RECORDING    0x10
 #define AUDIO_STATUS_META         0x11
 #define AUDIO_STATUS_END          0x12
 #define AUDIO_STATUS_ERROR        0x7F
 #define AUDIO_DATA_PACKET         0x20
+#define AUDIO_DATA_FLAG_FINAL     0x01
 #define AUDIO_CONTROL_ACK         0x01
 #define AUDIO_CONTROL_COMPLETE    0x02
 #define AUDIO_CONTROL_ABORT       0x03
@@ -160,8 +161,9 @@
 #define TTS_BUFFER_CAPACITY       (TTS_SAMPLE_RATE * TTS_MAX_SECONDS / 2)
 #define TTS_ACK_WINDOW            8
 #define TTS_SESSION_TIMEOUT_MS    8000
+#define TTS_PREBUFFER_BYTES       3200          // 400 ms of 16 kHz IMA-ADPCM
 
-#define TTS_PROTOCOL_VERSION      1
+#define TTS_PROTOCOL_VERSION      2
 #define TTS_CODEC_IMA_ADPCM       1
 #define TTS_CONTROL_BEGIN         0x01
 #define TTS_CONTROL_END           0x02
@@ -216,6 +218,8 @@ static bool     g_alertActive   = false;
 static uint32_t g_alertEnd      = 0;
 static bool     g_alertToggle   = false;
 static uint32_t g_lastAlertToggle = 0;
+static uint8_t  g_alertType     = 0;
+static uint32_t g_alertTonePhase = 0;
 
 // 上一帧成功响应（用于 GET_STATUS 判断）
 static uint8_t  g_lastStatusPayload[12] = {0};
@@ -236,13 +240,18 @@ static bool g_audioStatusSubscribed = false;
 enum AudioLifecycle {
     AUDIO_IDLE,
     AUDIO_RECORDING,
-    AUDIO_READY,
-    AUDIO_SENDING,
-    AUDIO_WAIT_ACK,
-    AUDIO_WAIT_COMPLETE
+    AUDIO_RETAINED
+};
+
+enum AudioTransferLifecycle {
+    AUDIO_TRANSFER_IDLE,
+    AUDIO_TRANSFER_SENDING,
+    AUDIO_TRANSFER_WAIT_ACK,
+    AUDIO_TRANSFER_WAIT_COMPLETE
 };
 
 static AudioLifecycle g_audioState = AUDIO_IDLE;
+static AudioTransferLifecycle g_audioTransferState = AUDIO_TRANSFER_IDLE;
 static bool g_micReady = false;
 static uint8_t* g_audioBuffer = nullptr;
 static size_t g_audioBytes = 0;
@@ -259,6 +268,8 @@ static bool g_speechDetected = false;
 static uint16_t g_silenceFrames = 0;
 static uint16_t g_noSpeechFrames = 0;
 static uint32_t g_recordStartedAt = 0;
+static bool g_audioStreamStarted = false;
+static bool g_audioFinalized = false;
 
 static uint8_t g_audioChunkPayload = 15;
 static uint16_t g_audioTotalChunks = 0;
@@ -295,6 +306,7 @@ static uint32_t g_ttsLastPacketAt = 0;
 static uint32_t g_ttsPlaybackSample = 0;
 static int32_t g_ttsPredictor = 0;
 static int32_t g_ttsIndex = 0;
+static bool g_ttsEndReceived = false;
 
 static const int8_t IMA_INDEX_TABLE[16] = {
     -1, -1, -1, -1, 2, 4, 6, 8,
@@ -501,7 +513,57 @@ static void handleSetSocialMode(uint8_t seq, const uint8_t* payload, uint8_t len
     Serial.println(g_socialMode);
 }
 
-// FIND_DEVICE 0x04 — 查找设备（振动/提示音）
+static void stopFindDeviceAlert() {
+    if (!g_alertActive) return;
+    g_alertActive = false;
+    digitalWrite(PIN_ALERT, LOW);
+    digitalWrite(PIN_LED, LOW);
+    if (g_micReady) i2s_zero_dma_buffer(I2S_NUM_0);
+}
+
+static void pollFindDeviceAlert(uint32_t now) {
+    if (!g_alertActive) return;
+    if (now >= g_alertEnd) {
+        stopFindDeviceAlert();
+        Serial.println("  FIND_DEVICE: alert ended");
+        return;
+    }
+
+    if (now - g_lastAlertToggle >= 250) {
+        g_lastAlertToggle = now;
+        g_alertToggle = !g_alertToggle;
+    }
+
+    const bool vibrationEnabled = g_alertType == 0 || g_alertType == 2;
+    const bool soundEnabled = g_alertType == 1 || g_alertType == 2;
+    digitalWrite(PIN_ALERT, vibrationEnabled && g_alertToggle ? HIGH : LOW);
+    digitalWrite(PIN_LED, g_alertToggle ? HIGH : LOW);
+
+    // 当前硬件已有 MAX98357A 扬声器。没有额外振动马达时，仍可通过提示音和闪灯找到挂件。
+    // 录音或 TTS 占用 I2S 时不抢占音频总线，GPIO2/状态灯提醒仍继续。
+    if (!soundEnabled || !g_micReady || g_audioState != AUDIO_IDLE || g_ttsState != TTS_IDLE) return;
+
+    static int32_t toneFrame[160];             // 16 kHz 下 10 ms
+    for (size_t i = 0; i < 160; i++) {
+        int16_t sample = 0;
+        if (g_alertToggle) {
+            sample = g_alertTonePhase < (TTS_SAMPLE_RATE / 2) ? 3500 : -3500;
+            g_alertTonePhase += 880;            // 880 Hz 方波提示音
+            if (g_alertTonePhase >= TTS_SAMPLE_RATE) g_alertTonePhase -= TTS_SAMPLE_RATE;
+        }
+        toneFrame[i] = (int32_t)sample * 65536;
+    }
+    size_t written = 0;
+    i2s_write(
+        I2S_NUM_0,
+        toneFrame,
+        sizeof(toneFrame),
+        &written,
+        pdMS_TO_TICKS(5)
+    );
+}
+
+// FIND_DEVICE 0x04 — 查找设备（振动/提示音/闪灯）
 static void handleFindDevice(uint8_t seq, const uint8_t* payload, uint8_t len) {
     if (len != 3) {
         sendResponse(CMD_FIND_DEVICE, seq, STATUS_INVALID_PAYLOAD, nullptr, 0);
@@ -518,9 +580,11 @@ static void handleFindDevice(uint8_t seq, const uint8_t* payload, uint8_t len) {
     // 启动 alert
     g_alertActive = true;
     g_alertEnd    = millis() + duration;
-    g_alertToggle = false;
-    g_lastAlertToggle = 0;
-    digitalWrite(PIN_ALERT, HIGH);
+    g_alertToggle = true;
+    g_lastAlertToggle = millis();
+    g_alertType = alertType;
+    g_alertTonePhase = 0;
+    digitalWrite(PIN_ALERT, (alertType == 0 || alertType == 2) ? HIGH : LOW);
     digitalWrite(PIN_LED, HIGH);
 
     Serial.print("  FIND_DEVICE type=");
@@ -745,11 +809,17 @@ static void clearRecordedAudio() {
     g_audioBytes = 0;
     g_audioSamples = 0;
     g_adpcmHasLowNibble = false;
+    g_audioStreamStarted = false;
+    g_audioFinalized = false;
+    g_audioTransferState = AUDIO_TRANSFER_IDLE;
     g_audioTotalChunks = 0;
     g_audioNextSequence = 0;
     g_audioAckedSequence = 0;
     g_audioWindowSent = 0;
     g_audioAckRetries = 0;
+    g_audioNextSendAt = 0;
+    g_audioAckDeadline = 0;
+    g_audioCompleteDeadline = 0;
 }
 
 static void discardRecordedAudio() {
@@ -761,6 +831,7 @@ static void discardRecordedAudio() {
 static void beginAudioTransfer();
 
 static bool startAudioRecording() {
+    stopFindDeviceAlert();
     if (g_ttsState != TTS_IDLE) {
         Serial.println("  AUDIO: speaker playback is busy");
         return false;
@@ -827,7 +898,9 @@ static void finishAudioRecording(bool bufferFull) {
     }
 
     g_audioCrc32 = crc32_ieee(g_audioBuffer, g_audioBytes);
-    g_audioState = AUDIO_READY;
+    g_audioFinalized = true;
+    g_audioTotalChunks = (uint16_t)((g_audioBytes + g_audioChunkPayload - 1) / g_audioChunkPayload);
+    g_audioState = AUDIO_RETAINED;
     Serial.print("  AUDIO: captured samples=");
     Serial.print(g_audioSamples);
     Serial.print(" encodedBytes=");
@@ -847,7 +920,7 @@ static void pollAudioRecording() {
         raw,
         sizeof(raw),
         &bytesRead,
-        pdMS_TO_TICKS(25)
+        0
     );
     if (result != ESP_OK || bytesRead == 0) return;
 
@@ -897,21 +970,30 @@ static void pollAudioRecording() {
     } else if (!g_speechDetected && g_noSpeechFrames >= AUDIO_NO_SPEECH_FRAMES) {
         finishAudioRecording(false);
     }
+
+    // Start BLE transfer as soon as the first complete ADPCM bytes exist.
+    // Recording continues even while the transfer state machine waits for ACKs.
+    if (g_audioState == AUDIO_RECORDING && !g_audioStreamStarted && g_audioBytes > 0) {
+        beginAudioTransfer();
+    }
 }
 
 static void beginAudioTransfer() {
-    if (g_audioState != AUDIO_READY || !g_connected || !g_audioDataSubscribed ||
+    if (g_audioStreamStarted || g_audioState == AUDIO_IDLE || g_audioSamples == 0 ||
+        !g_connected || !g_audioDataSubscribed ||
         !g_audioStatusSubscribed || !pBleServer || g_connHandle == BLE_HS_CONN_HANDLE_NONE) {
         return;
     }
 
     uint16_t mtu = pBleServer->getPeerMTU(g_connHandle);
     if (mtu < 23) mtu = 23;
-    uint16_t maxChunk = mtu > 8 ? mtu - 8 : 15; // ATT(3) + Audio Data header(5)
+    uint16_t maxChunk = mtu > 9 ? mtu - 9 : 14; // ATT(3) + v2 Audio Data header(6)
     if (maxChunk > 239) maxChunk = 239;
-    if (maxChunk < 15) maxChunk = 15;
+    if (maxChunk < 14) maxChunk = 14;
     g_audioChunkPayload = (uint8_t)maxChunk;
-    g_audioTotalChunks = (uint16_t)((g_audioBytes + g_audioChunkPayload - 1) / g_audioChunkPayload);
+    g_audioTotalChunks = g_audioFinalized
+        ? (uint16_t)((g_audioBytes + g_audioChunkPayload - 1) / g_audioChunkPayload)
+        : 0;
     g_audioNextSequence = 0;
     g_audioAckedSequence = 0;
     g_audioWindowSent = 0;
@@ -924,34 +1006,40 @@ static void beginAudioTransfer() {
     meta[4] = AUDIO_CODEC_IMA_ADPCM;
     meta[5] = 16;
     writeUint16LE(meta + 6, AUDIO_SAMPLE_RATE);
-    writeUint32LE(meta + 8, g_audioSamples);
-    writeUint32LE(meta + 12, (uint32_t)g_audioBytes);
+    // v2 announces the stream before the final lengths are known. The END
+    // status carries sampleCount, encodedBytes and CRC32.
+    writeUint32LE(meta + 8, 0);
+    writeUint32LE(meta + 12, 0);
     writeUint16LE(meta + 16, (uint16_t)g_audioInitialPredictor);
     meta[18] = g_audioInitialIndex;
     meta[19] = g_audioChunkPayload;
 
     if (!sendAudioStatus(meta, sizeof(meta))) {
-        Serial.println("  AUDIO: failed to send metadata; keeping recording");
+        Serial.println("  AUDIO: failed to send stream metadata; will retry");
         return;
     }
 
-    g_audioState = AUDIO_SENDING;
-    g_audioNextSendAt = millis() + 120;
-    Serial.print("  AUDIO: transfer start, MTU=");
+    g_audioStreamStarted = true;
+    g_audioTransferState = AUDIO_TRANSFER_SENDING;
+    g_audioNextSendAt = millis() + 1;
+    Serial.print("  AUDIO: live transfer start, MTU=");
     Serial.print(mtu);
     Serial.print(" chunk=");
     Serial.print(g_audioChunkPayload);
-    Serial.print(" packets=");
-    Serial.println(g_audioTotalChunks);
+    Serial.print(" recording=");
+    Serial.println(g_audioState == AUDIO_RECORDING ? "yes" : "no");
 }
 
 static void sendAudioEnd() {
-    uint8_t status[7] = {0};
+    if (!g_audioFinalized || g_audioTransferState == AUDIO_TRANSFER_WAIT_COMPLETE) return;
+    uint8_t status[15] = {0};
     status[0] = AUDIO_STATUS_END;
     writeUint16LE(status + 1, g_audioSession);
-    writeUint32LE(status + 3, g_audioCrc32);
+    writeUint32LE(status + 3, g_audioSamples);
+    writeUint32LE(status + 7, (uint32_t)g_audioBytes);
+    writeUint32LE(status + 11, g_audioCrc32);
     if (sendAudioStatus(status, sizeof(status))) {
-        g_audioState = AUDIO_WAIT_COMPLETE;
+        g_audioTransferState = AUDIO_TRANSFER_WAIT_COMPLETE;
         g_audioCompleteDeadline = millis() + 5000;
         Serial.println("  AUDIO: all packets acknowledged, END sent");
     }
@@ -959,34 +1047,52 @@ static void sendAudioEnd() {
 
 static void pollAudioTransfer() {
     uint32_t now = millis();
-    if (g_audioState == AUDIO_SENDING) {
+    if (!g_audioStreamStarted) {
+        beginAudioTransfer();
+        return;
+    }
+
+    if (g_audioTransferState == AUDIO_TRANSFER_SENDING) {
         if (now < g_audioNextSendAt) return;
         if (!g_connected || !g_audioDataSubscribed || !pAudioData) {
-            g_audioState = AUDIO_READY;
+            g_audioStreamStarted = false;
+            g_audioTransferState = AUDIO_TRANSFER_IDLE;
             return;
         }
-        if (g_audioNextSequence >= g_audioTotalChunks) {
-            g_audioState = AUDIO_WAIT_ACK;
+
+        if (g_audioFinalized && g_audioNextSequence >= g_audioTotalChunks) {
+            if (g_audioAckedSequence >= g_audioTotalChunks) {
+                sendAudioEnd();
+                return;
+            }
+            g_audioTransferState = AUDIO_TRANSFER_WAIT_ACK;
             g_audioAckDeadline = now + AUDIO_ACK_TIMEOUT_MS;
             return;
         }
 
         size_t offset = (size_t)g_audioNextSequence * g_audioChunkPayload;
+        if (offset >= g_audioBytes) return;
         size_t remaining = g_audioBytes - offset;
+        // Keep one complete chunk behind capture so the eventual last packet
+        // can always carry AUDIO_DATA_FLAG_FINAL, even on an exact boundary.
+        if (!g_audioFinalized && remaining <= g_audioChunkPayload) return;
         size_t payloadLength = remaining < g_audioChunkPayload ? remaining : g_audioChunkPayload;
-        uint8_t packet[5 + 239];
+        uint8_t packet[6 + 239];
         packet[0] = AUDIO_DATA_PACKET;
         writeUint16LE(packet + 1, g_audioSession);
         writeUint16LE(packet + 3, g_audioNextSequence);
-        memcpy(packet + 5, g_audioBuffer + offset, payloadLength);
+        packet[5] = (g_audioFinalized && g_audioNextSequence + 1 >= g_audioTotalChunks)
+            ? AUDIO_DATA_FLAG_FINAL
+            : 0;
+        memcpy(packet + 6, g_audioBuffer + offset, payloadLength);
 
-        if (pAudioData->notify(packet, payloadLength + 5, g_connHandle)) {
+        if (pAudioData->notify(packet, payloadLength + 6, g_connHandle)) {
             g_audioNextSequence++;
             g_audioWindowSent++;
-            g_audioNextSendAt = now + 8;
+            g_audioNextSendAt = now + 1;
             if (g_audioWindowSent >= AUDIO_WINDOW_PACKETS ||
-                g_audioNextSequence >= g_audioTotalChunks) {
-                g_audioState = AUDIO_WAIT_ACK;
+                (g_audioFinalized && g_audioNextSequence >= g_audioTotalChunks)) {
+                g_audioTransferState = AUDIO_TRANSFER_WAIT_ACK;
                 g_audioAckDeadline = now + AUDIO_ACK_TIMEOUT_MS;
             }
         } else {
@@ -995,21 +1101,21 @@ static void pollAudioTransfer() {
         return;
     }
 
-    if (g_audioState == AUDIO_WAIT_ACK && now >= g_audioAckDeadline) {
+    if (g_audioTransferState == AUDIO_TRANSFER_WAIT_ACK && now >= g_audioAckDeadline) {
         if (++g_audioAckRetries > AUDIO_ACK_MAX_RETRIES) {
-            Serial.println("  AUDIO: ACK timeout; retaining recording for reconnect");
+            Serial.println("  AUDIO: ACK timeout; aborting live recording session");
             sendAudioError(AUDIO_ERROR_TIMEOUT);
-            g_audioState = AUDIO_READY;
+            discardRecordedAudio();
             return;
         }
         g_audioNextSequence = g_audioAckedSequence;
         g_audioWindowSent = 0;
-        g_audioState = AUDIO_SENDING;
-        g_audioNextSendAt = now + 30;
+        g_audioTransferState = AUDIO_TRANSFER_SENDING;
+        g_audioNextSendAt = now + 10;
         return;
     }
 
-    if (g_audioState == AUDIO_WAIT_COMPLETE && now >= g_audioCompleteDeadline) {
+    if (g_audioTransferState == AUDIO_TRANSFER_WAIT_COMPLETE && now >= g_audioCompleteDeadline) {
         Serial.println("  AUDIO: COMPLETE timeout; recording released");
         discardRecordedAudio();
     }
@@ -1024,18 +1130,20 @@ static void handleAudioControl(const std::string& value) {
 
     if (data[0] == AUDIO_CONTROL_ACK && len == 5) {
         uint16_t nextExpected = data[3] | ((uint16_t)data[4] << 8);
-        if (nextExpected > g_audioTotalChunks || nextExpected < g_audioAckedSequence) return;
-        if (nextExpected == g_audioAckedSequence && g_audioState != AUDIO_WAIT_ACK) return;
-        if (g_audioState == AUDIO_WAIT_COMPLETE && nextExpected >= g_audioTotalChunks) return;
+        if (!g_audioStreamStarted || nextExpected > g_audioNextSequence ||
+            nextExpected < g_audioAckedSequence) return;
+        if (g_audioFinalized && nextExpected > g_audioTotalChunks) return;
+        if (g_audioTransferState == AUDIO_TRANSFER_WAIT_COMPLETE &&
+            nextExpected >= g_audioTotalChunks) return;
         g_audioAckedSequence = nextExpected;
         g_audioAckRetries = 0;
-        if (nextExpected >= g_audioTotalChunks) {
+        if (g_audioFinalized && nextExpected >= g_audioTotalChunks) {
             sendAudioEnd();
         } else {
             g_audioNextSequence = nextExpected;
             g_audioWindowSent = 0;
-            g_audioState = AUDIO_SENDING;
-            g_audioNextSendAt = millis() + 12;
+            g_audioTransferState = AUDIO_TRANSFER_SENDING;
+            g_audioNextSendAt = millis() + 1;
         }
         return;
     }
@@ -1109,10 +1217,12 @@ static void resetTtsSession() {
     g_ttsPlaybackSample = 0;
     g_ttsPredictor = 0;
     g_ttsIndex = 0;
+    g_ttsEndReceived = false;
 }
 
 static void beginTtsReceive(const uint8_t* data, size_t len) {
     uint16_t session = len >= 4 ? (data[2] | ((uint16_t)data[3] << 8)) : 0;
+    stopFindDeviceAlert();
     if (g_ttsState != TTS_IDLE || g_audioState != AUDIO_IDLE) {
         sendTtsError(session, TTS_ERROR_BUSY);
         return;
@@ -1163,6 +1273,10 @@ static void beginTtsReceive(const uint8_t* data, size_t len) {
     g_ttsExpectedSequence = 0;
     g_ttsReceivedBytes = 0;
     g_ttsLastPacketAt = millis();
+    g_ttsPlaybackSample = 0;
+    g_ttsPredictor = g_ttsInitialPredictor;
+    g_ttsIndex = g_ttsInitialIndex;
+    g_ttsEndReceived = false;
     g_ttsState = TTS_RECEIVING;
     sendTtsAck(TTS_STATUS_READY, session, 0);
     Serial.print("  TTS: receiving session=");
@@ -1173,13 +1287,30 @@ static void beginTtsReceive(const uint8_t* data, size_t len) {
     Serial.println(encodedBytes);
 }
 
+static void startTtsPlaybackIfReady() {
+    if (g_ttsState != TTS_RECEIVING) return;
+    size_t prebuffer = g_ttsEncodedBytes < TTS_PREBUFFER_BYTES
+        ? g_ttsEncodedBytes
+        : TTS_PREBUFFER_BYTES;
+    if (g_ttsReceivedBytes < prebuffer) return;
+
+    g_ttsState = TTS_PLAYING;
+    i2s_zero_dma_buffer(I2S_NUM_0);
+    sendTtsSimpleStatus(TTS_STATUS_PLAYING, g_ttsSession);
+    Serial.print("  TTS: edge playback started session=");
+    Serial.print(g_ttsSession);
+    Serial.print(" bufferedBytes=");
+    Serial.println(g_ttsReceivedBytes);
+}
+
 static void handleTtsData(const std::string& value) {
     const uint8_t* data = (const uint8_t*)value.data();
     size_t len = value.length();
     if (len < 6 || data[0] != TTS_DATA_PACKET) return;
     uint16_t session = data[1] | ((uint16_t)data[2] << 8);
     uint16_t sequence = data[3] | ((uint16_t)data[4] << 8);
-    if (g_ttsState != TTS_RECEIVING || session != g_ttsSession) return;
+    if ((g_ttsState != TTS_RECEIVING && g_ttsState != TTS_PLAYING) ||
+        session != g_ttsSession || g_ttsEndReceived) return;
 
     if (sequence != g_ttsExpectedSequence) {
         sendTtsAck(TTS_STATUS_ACK, session, g_ttsExpectedSequence);
@@ -1203,6 +1334,7 @@ static void handleTtsData(const std::string& value) {
         g_ttsExpectedSequence == g_ttsTotalChunks) {
         sendTtsAck(TTS_STATUS_ACK, session, g_ttsExpectedSequence);
     }
+    startTtsPlaybackIfReady();
 }
 
 static int16_t decodeTtsNibble(uint8_t nibble) {
@@ -1236,7 +1368,8 @@ static void handleTtsControl(const std::string& value) {
         return;
     }
     if (data[0] != TTS_CONTROL_END || len != 7 ||
-        g_ttsState != TTS_RECEIVING || session != g_ttsSession) {
+        (g_ttsState != TTS_RECEIVING && g_ttsState != TTS_PLAYING) ||
+        session != g_ttsSession) {
         return;
     }
 
@@ -1256,13 +1389,9 @@ static void handleTtsControl(const std::string& value) {
         return;
     }
 
-    g_ttsPlaybackSample = 0;
-    g_ttsPredictor = g_ttsInitialPredictor;
-    g_ttsIndex = g_ttsInitialIndex;
-    g_ttsState = TTS_PLAYING;
-    i2s_zero_dma_buffer(I2S_NUM_0);
-    sendTtsSimpleStatus(TTS_STATUS_PLAYING, session);
-    Serial.print("  TTS: playback started session=");
+    g_ttsEndReceived = true;
+    startTtsPlaybackIfReady();
+    Serial.print("  TTS: stream END verified session=");
     Serial.println(session);
 }
 
@@ -1277,9 +1406,11 @@ static void pollTtsPlayback() {
     }
     if (g_ttsState != TTS_PLAYING) return;
 
+    uint32_t availableSamples = 1 + g_ttsReceivedBytes * 2;
+    if (availableSamples > g_ttsSampleCount) availableSamples = g_ttsSampleCount;
     int32_t output[AUDIO_FRAME_SAMPLES];
     size_t count = 0;
-    while (count < AUDIO_FRAME_SAMPLES && g_ttsPlaybackSample < g_ttsSampleCount) {
+    while (count < AUDIO_FRAME_SAMPLES && g_ttsPlaybackSample < availableSamples) {
         int16_t sample;
         if (g_ttsPlaybackSample == 0) {
             sample = g_ttsInitialPredictor;
@@ -1291,6 +1422,21 @@ static void pollTtsPlayback() {
         }
         output[count++] = (int32_t)sample * 65536;
         g_ttsPlaybackSample++;
+    }
+
+    if (count == 0) {
+        if (g_ttsEndReceived && g_ttsPlaybackSample >= g_ttsSampleCount) {
+            uint16_t session = g_ttsSession;
+            sendTtsSimpleStatus(TTS_STATUS_COMPLETE, session);
+            Serial.print("  TTS: playback complete session=");
+            Serial.println(session);
+            resetTtsSession();
+        } else if (!g_ttsEndReceived && millis() - g_ttsLastPacketAt > TTS_SESSION_TIMEOUT_MS) {
+            uint16_t session = g_ttsSession;
+            sendTtsError(session, TTS_ERROR_TIMEOUT);
+            resetTtsSession();
+        }
+        return;
     }
 
     size_t written = 0;
@@ -1308,7 +1454,7 @@ static void pollTtsPlayback() {
         return;
     }
 
-    if (g_ttsPlaybackSample >= g_ttsSampleCount) {
+    if (g_ttsEndReceived && g_ttsPlaybackSample >= g_ttsSampleCount) {
         uint16_t session = g_ttsSession;
         sendTtsSimpleStatus(TTS_STATUS_COMPLETE, session);
         Serial.print("  TTS: playback complete session=");
@@ -1447,10 +1593,15 @@ class ServerCB : public NimBLEServerCallbacks {
         if (g_connHandle == connInfo.getConnHandle()) {
             g_connHandle = BLE_HS_CONN_HANDLE_NONE;
         }
-        if (g_audioState == AUDIO_SENDING || g_audioState == AUDIO_WAIT_ACK ||
-            g_audioState == AUDIO_WAIT_COMPLETE) {
-            // 保留已经录好的数据；小程序重连并重新订阅后从头发送。
-            g_audioState = AUDIO_READY;
+        if (g_audioState != AUDIO_IDLE) {
+            // Restart the current v2 stream from sequence zero after reconnect.
+            // Capture may continue locally while the link is unavailable.
+            g_audioStreamStarted = false;
+            g_audioTransferState = AUDIO_TRANSFER_IDLE;
+            g_audioNextSequence = 0;
+            g_audioAckedSequence = 0;
+            g_audioWindowSent = 0;
+            g_audioAckRetries = 0;
         }
         if (g_ttsState != TTS_IDLE) resetTtsSession();
         Serial.print("<<< Client disconnected, reason=");
@@ -1873,20 +2024,12 @@ void loop() {
     // ── 电量模拟 ──
     pollBattery();
 
-    // ── FIND_DEVICE Alert 处理 ──
-    if (g_alertActive) {
-        if (now >= g_alertEnd) {
-            g_alertActive = false;
-            digitalWrite(PIN_ALERT, LOW);
-            digitalWrite(PIN_LED, LOW);
-            Serial.println("  FIND_DEVICE: alert ended");
-        } else if (now - g_lastAlertToggle >= 250) {
-            g_lastAlertToggle = now;
-            g_alertToggle = !g_alertToggle;
-            digitalWrite(PIN_ALERT, g_alertToggle ? HIGH : LOW);
-            digitalWrite(PIN_LED, g_alertToggle ? HIGH : LOW);
-        }
-    }
+    // ── FIND_DEVICE：GPIO2 振动输出 + MAX98357A 提示音 + 状态灯 ──
+    pollFindDeviceAlert(now);
 
-    delay((g_audioState == AUDIO_RECORDING || g_ttsState == TTS_PLAYING) ? 1 : 10);
+    // 录音上传由主循环逐包 Notify。发送态也必须快速轮询，否则 6 ms
+    // 的包间隔会被这里的 10 ms 睡眠放大，低 MTU 时尤其明显。
+    delay((g_audioState == AUDIO_RECORDING ||
+           g_audioTransferState == AUDIO_TRANSFER_SENDING ||
+           g_ttsState == TTS_PLAYING) ? 1 : 10);
 }

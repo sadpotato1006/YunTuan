@@ -57,7 +57,7 @@ module.exports = {
   sof: 0xA5,
   protocolVersion: 0x01,
   protocolMajor: 0x01,
-  protocolMinor: 0x02,
+  protocolMinor: 0x03,
   flags: {
     request: 0x00,
     response: 0x01,

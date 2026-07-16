@@ -2,11 +2,20 @@
 .chat-toolbar { min-height: 64rpx; padding: 8rpx 30rpx; display: flex; align-items: center; justify-content: space-between; color: #87938f; font-size: 25rpx; background: #eef2ee; }
 .clear-btn { min-width: 100rpx; min-height: 56rpx; line-height: 56rpx; margin: 0; padding: 0 18rpx; border-radius: 16rpx; background: transparent !important; color: #71807b !important; font-size: 27rpx; }
 .clear-btn::after { border-color: #cdd5d1; }
+.stop-btn { min-width: 148rpx; min-height: 56rpx; line-height: 56rpx; margin: 0; padding: 0 18rpx; border-radius: 16rpx; background: #fff4f1 !important; color: #b45f50 !important; font-size: 27rpx; }
+.stop-btn::after { border-color: #e7b8af; }
 .messages { flex: 1; height: 0; padding: 28rpx; box-sizing: border-box; }
 .message-row { display: flex; margin: 22rpx 0; }
 .message-row.user { justify-content: flex-end; }
+.message-content { max-width: 76%; }
+.message-row.user .message-content { display: flex; flex-direction: column; align-items: flex-end; }
 .bubble { max-width: 76%; padding: 24rpx 28rpx; border-radius: 24rpx 24rpx 24rpx 6rpx; background: #fff; line-height: 1.65; font-size: 32rpx; }
+.message-content .bubble { max-width: 100%; box-sizing: border-box; }
 .user .bubble { background: #608d81; color: #fff; border-radius: 24rpx 24rpx 6rpx 24rpx; }
+.message-status { margin-top: 8rpx; color: #87938f; font-size: 24rpx; }
+.message-error { display: flex; align-items: center; gap: 10rpx; margin-top: 8rpx; color: #b45f50; font-size: 24rpx; }
+.retry-btn { min-height: 48rpx; line-height: 48rpx; margin: 0; padding: 0 18rpx; border-radius: 14rpx; background: #fff4f1 !important; color: #b45f50 !important; font-size: 24rpx; }
+.retry-btn::after { border-color: #e7b8af; }
 .thinking { color: #71807b; }
 .chat-bottom { height: 30rpx; }
 .voice-panel { background: #fff; padding: 22rpx 30rpx 36rpx; text-align: center; box-shadow: 0 -8rpx 24rpx rgba(40,60,50,.05); }

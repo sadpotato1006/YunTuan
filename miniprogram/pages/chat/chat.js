@@ -9,6 +9,7 @@ Page({
     listening: false,
     recognizing: false,
     thinking: false,
+    generating: false,
     speaking: false,
     loading: true,
     hardwareVoiceSupported: false,
@@ -36,9 +37,15 @@ Page({
     this._unsubscribeHardwarePlayback = deviceTtsService.subscribe(state => {
       if (this._pageUnloaded) return;
       const active = state.phase === "sending" || state.phase === "playing";
+      const betweenSegments = this.data.speaking &&
+        (state.phase === "idle" || state.phase === "complete");
+      if (state.phase === "playing" && this._activeVoiceTrace && !this._activeVoiceTrace.firstPlaybackAt) {
+        this._activeVoiceTrace.firstPlaybackAt = Date.now();
+        this.logVoiceLatency(this._activeVoiceTrace);
+      }
       this.setData({
         hardwarePlaybackSupported: state.supported,
-        speaking: active || (this.data.speaking && state.phase === "idle"),
+        speaking: active || betweenSegments,
         hardwarePlaybackText: state.errorMessage || state.statusText
       });
     });
@@ -52,6 +59,10 @@ Page({
 
   onUnload() {
     this._pageUnloaded = true;
+    if (this._activeChatRequest && typeof this._activeChatRequest.abort === "function") {
+      this._activeChatRequest.abort();
+    }
+    chatService.flushMessages();
     this.stopVoiceRecognition(true);
     this.releaseVoiceRecorder();
     if (this._unsubscribeHardwareVoiceState) this._unsubscribeHardwareVoiceState();
@@ -164,7 +175,9 @@ Page({
   },
 
   enqueueHardwareRecording(recording) {
-    if (!recording || !recording.filePath) return;
+    const hasInlineAudio = recording &&
+      typeof recording.audioBase64 === "string" && Boolean(recording.audioBase64);
+    if (!recording || (!recording.filePath && !hasInlineAudio)) return;
     if (this._pageUnloaded) {
       deviceAudioService.removeFile(recording.filePath);
       return;
@@ -176,21 +189,52 @@ Page({
   async processHardwareVoiceQueue() {
     if (this._processingHardwareVoice || this._pageUnloaded) return;
     if (!this._hardwareVoiceQueue || !this._hardwareVoiceQueue.length) return;
-    if (this.data.thinking || this.data.speaking || this.data.listening || this.data.recognizing || this.data.loading) return;
+    if (this.data.generating || this.data.speaking || this.data.listening || this.data.recognizing || this.data.loading) return;
 
     const recording = this._hardwareVoiceQueue.shift();
+    const timing = recording.timing || {};
+    const voiceTrace = {
+      recordingStartedAt: timing.recordingStartedAt || Date.now() - (recording.durationMs || 0),
+      recordingFinishedAt: timing.recordingFinishedAt || timing.completedAt || 0,
+      audioReadyAt: timing.completedAt || Date.now(),
+      recordingMs: timing.recordingMs || recording.durationMs || 0,
+      bleUploadMs: timing.transferMs || 0,
+      bleMtu: timing.mtu || 0,
+      bleChunkPayload: timing.chunkPayload || 0,
+      blePacketCount: timing.totalChunks || 0,
+      bleEncodedBytes: timing.encodedBytes || 0
+    };
     this._processingHardwareVoice = true;
-    this.setData({ recognizing: true });
+    this.setData({ recognizing: true, hardwareVoiceText: "录音已接收，正在识别…" });
     try {
-      const response = await chatService.transcribeAudio(recording.filePath, recording.voiceFormat || "wav");
+      const asrStartedAt = Date.now();
+      let response;
+      if (recording.realtimeTranscriptPromise) {
+        try {
+          const text = await recording.realtimeTranscriptPromise;
+          response = { code: 0, message: "success", data: { text } };
+          voiceTrace.asrMode = "realtime";
+        } catch (realtimeError) {
+          console.warn("实时语音识别失败，改用完整录音识别：", realtimeError.message);
+        }
+      }
+      if (!response) {
+        response = await chatService.transcribeAudio(
+          recording.filePath,
+          recording.voiceFormat || "wav",
+          recording.audioBase64
+        );
+        voiceTrace.asrMode = "sentence-fallback";
+      }
+      voiceTrace.asrMs = Date.now() - asrStartedAt;
       if (this._pageUnloaded) return;
       const content = response.data && typeof response.data.text === "string"
         ? response.data.text.trim()
         : "";
       if (!content) throw new Error("没有听清，请再说一次");
 
-      this.setData({ recognizing: false, inputValue: "" });
-      await this.sendMessage(content);
+      this.setData({ recognizing: false, inputValue: "", hardwareVoiceText: "识别完成，正在生成回复…" });
+      await this.sendMessage(content, voiceTrace);
     } catch (error) {
       if (!this._pageUnloaded) {
         console.error("挂件语音转文字失败：", error);
@@ -212,7 +256,16 @@ Page({
   async loadMessages() {
     try {
       const result = await chatService.getMessages();
-      this.setData({ messages: result.data.messages, loading: false });
+      const messages = (result.data.messages || []).map(item =>
+        item && item.role === "user" && item.status === "sending"
+          ? Object.assign({}, item, {
+            status: "failed",
+            errorMessage: "上次回复未完成，可点击重试"
+          })
+          : item
+      );
+      this.setData({ messages, loading: false });
+      chatService.saveMessages(messages);
       this.processHardwareVoiceQueue();
     } catch (error) {
       this.handleError(error);
@@ -224,7 +277,7 @@ Page({
   },
 
   sendTextMessage() {
-    if (this.data.thinking || this.data.speaking || this.data.loading || this.data.listening || this.data.recognizing) return;
+    if (this.data.generating || this.data.speaking || this.data.loading || this.data.listening || this.data.recognizing) return;
 
     const content = this.data.inputValue.trim();
     if (!content) {
@@ -237,7 +290,7 @@ Page({
 
   toggleListening() {
     // AI 正在回复时忽略再次点击，避免重复提交和消息顺序错乱。
-    if (this.data.thinking || this.data.speaking || this.data.loading || this.data.recognizing) return;
+    if (this.data.generating || this.data.speaking || this.data.loading || this.data.recognizing) return;
 
     if (this.data.listening) {
       this.stopVoiceRecognition(false);
@@ -293,74 +346,388 @@ Page({
     }
   },
 
-  async sendMessage(content) {
-    if (this.data.thinking) return;
+  async sendMessage(content, voiceTrace, retryOptions) {
+    if (this.data.generating) return;
 
-    const userItem = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      content
-    };
-    const userMessages = this.data.messages.concat(userItem);
+    const retry = retryOptions || {};
+    const requestId = retry.requestId || chatService.createRequestId();
+    const userId = retry.userMessageId || `user-${Date.now()}`;
+    let userMessages;
+    if (retry.userMessageId) {
+      userMessages = this.data.messages
+        .filter(item => item.replyTo !== retry.userMessageId)
+        .map(item => item.id === retry.userMessageId
+          ? Object.assign({}, item, { status: "sending", errorMessage: "", requestId })
+          : item);
+    } else {
+      userMessages = this.data.messages.concat({
+        id: userId,
+        role: "user",
+        content,
+        status: "sending",
+        requestId
+      });
+    }
+    this._generationCancelled = false;
     this.setData({
       thinking: true,
+      generating: true,
       messages: userMessages
     });
     chatService.saveMessages(userMessages);
     this.scrollToBottom();
 
     try {
-      // 页面只调用 service；service 内部负责 Mock、云函数和 HTTP 切换。
-      const result = await chatService.sendMessage(content);
-      if (!result.data || !result.data.reply) {
-        throw new Error("AI 没有返回有效回复");
+      const replyStartedAt = Date.now();
+      if (chatService.canStreamMessage()) {
+        try {
+          await this.receiveStreamingReply(
+            content,
+            userMessages,
+            voiceTrace,
+            replyStartedAt,
+            userId,
+            requestId
+          );
+          return;
+        } catch (streamError) {
+          if (!streamError.canFallback || streamError.partialReply) throw streamError;
+          console.warn("流式聊天不可用，自动切换普通聊天：", streamError.message);
+          if (!this._pageUnloaded) {
+            this.setData({
+              thinking: true,
+              hardwarePlaybackText: voiceTrace ? "流式服务不可用，正在用普通模式回复…" : this.data.hardwarePlaybackText
+            });
+          }
+        }
       }
 
-      const reply = {
-        id: `ai-${Date.now()}`,
-        role: "assistant",
-        content: result.data.reply
-      };
-      const replyMessages = userMessages.concat(reply);
-      this.setData({ messages: replyMessages });
-      chatService.saveMessages(replyMessages);
-      this.scrollToBottom();
+      await this.receiveCompleteReply(
+        content,
+        userMessages,
+        voiceTrace,
+        replyStartedAt,
+        userId,
+        requestId
+      );
+    } catch (error) {
+      console.error("发送聊天消息失败：", error);
+      if (!this._pageUnloaded) {
+        const errorMessage = error.cancelled ? "已停止生成，可点击重试" : (error.message || "发送失败，请稍后重试");
+        const failedMessages = this.data.messages.map(item => item.id === userId
+          ? Object.assign({}, item, { status: "failed", errorMessage, requestId })
+          : item);
+        this.setData({ messages: failedMessages });
+        chatService.saveMessages(failedMessages);
+        if (!error.cancelled) {
+          wx.showToast({ title: errorMessage, icon: "none", duration: 2600 });
+        }
+      }
+    } finally {
+      this._activeChatRequest = null;
+      if (!this._pageUnloaded) {
+        this.setData({ generating: false, thinking: false, speaking: false, listening: false });
+        this.processHardwareVoiceQueue();
+      }
+    }
+  },
 
-      if (deviceTtsService.getState().attached) {
-        this.setData({
-          thinking: false,
-          speaking: true,
-          hardwarePlaybackText: "正在生成云团语音…"
+  async receiveCompleteReply(content, userMessages, voiceTrace, replyStartedAt, userId, requestId) {
+    // 普通云函数仍作为低版本基础库、未部署 HTTP 函数或上游不支持 SSE 时的降级链路。
+    const result = await chatService.sendMessage(content, userMessages.slice(0, -1), requestId);
+    if (this._generationCancelled) {
+      const cancelled = new Error("已停止生成");
+      cancelled.cancelled = true;
+      throw cancelled;
+    }
+    if (voiceTrace) voiceTrace.aiAndNetworkMs = Date.now() - replyStartedAt;
+    if (!result.data || !result.data.reply) {
+      throw new Error("AI 没有返回有效回复");
+    }
+
+    const reply = {
+      id: `ai-${Date.now()}`,
+      role: "assistant",
+      content: result.data.reply,
+      replyTo: userId,
+      status: "done"
+    };
+    const sentMessages = userMessages.map(item => item.id === userId
+      ? Object.assign({}, item, { status: "sent", errorMessage: "" })
+      : item);
+    const replyMessages = sentMessages.concat(reply);
+    this.setData({ messages: replyMessages, generating: false, thinking: false });
+    chatService.saveMessages(replyMessages);
+    this.scrollToBottom();
+
+    if (deviceTtsService.getState().attached) {
+      this.setData({
+        thinking: false,
+        speaking: true,
+        hardwarePlaybackText: "正在生成云团语音…"
+      });
+      try {
+        await this.playReplySpeech(result.data.reply, voiceTrace);
+      } catch (speechError) {
+        console.error("挂件朗读失败：", speechError);
+        wx.showToast({
+          title: speechError.message || "文字回复成功，但朗读失败",
+          icon: "none",
+          duration: 2800
         });
+      } finally {
+        if (voiceTrace && this._activeVoiceTrace === voiceTrace) this._activeVoiceTrace = null;
+        if (!this._pageUnloaded) this.setData({ speaking: false });
+      }
+    }
+  },
+
+  async receiveStreamingReply(content, userMessages, voiceTrace, replyStartedAt, userId, requestId) {
+    const replyId = `ai-stream-${Date.now()}`;
+    const speechQueue = deviceTtsService.getState().attached
+      ? this.createStreamingSpeechQueue(voiceTrace)
+      : null;
+    let partialReply = "";
+    let firstSegmentReceived = false;
+
+    try {
+      const operation = chatService.streamMessage(
+        content,
+        userMessages.slice(0, -1),
+        {
+          onSegment: segment => {
+            if (this._pageUnloaded) return;
+            partialReply += segment;
+            if (!firstSegmentReceived) {
+              firstSegmentReceived = true;
+              if (voiceTrace) voiceTrace.aiAndNetworkMs = Date.now() - replyStartedAt;
+            }
+            const replyMessages = userMessages.concat({
+              id: replyId,
+              role: "assistant",
+              content: partialReply,
+              replyTo: userId,
+              status: "streaming"
+            });
+            this.setData({
+              messages: replyMessages,
+              // 未连接挂件时继续用 thinking 锁住输入，直到完整流结束，避免消息并发乱序。
+              thinking: !speechQueue,
+              speaking: Boolean(speechQueue),
+              hardwarePlaybackText: speechQueue
+                ? "已收到首段，正在生成云团语音…"
+                : this.data.hardwarePlaybackText
+            });
+            chatService.scheduleSaveMessages(replyMessages);
+            this.scrollToBottom();
+            if (speechQueue) speechQueue.enqueue(segment);
+          }
+        },
+        requestId
+      );
+      this._activeChatRequest = operation;
+      const result = await operation;
+      if (this._generationCancelled) {
+        const cancelled = new Error("已停止生成");
+        cancelled.cancelled = true;
+        cancelled.partialReply = partialReply;
+        throw cancelled;
+      }
+
+      if (!firstSegmentReceived && voiceTrace) {
+        voiceTrace.aiAndNetworkMs = Date.now() - replyStartedAt;
+      }
+      const finalReply = result.data && result.data.reply;
+      if (!finalReply) throw new Error("AI 没有返回有效回复");
+
+      const sentMessages = userMessages.map(item => item.id === userId
+        ? Object.assign({}, item, { status: "sent", errorMessage: "" })
+        : item);
+      const finalMessages = sentMessages.concat({
+        id: replyId,
+        role: "assistant",
+        content: finalReply,
+        replyTo: userId,
+        status: "done"
+      });
+      if (!this._pageUnloaded) {
+        this.setData({ messages: finalMessages, generating: false, thinking: false });
+        chatService.saveMessages(finalMessages);
+        this.scrollToBottom();
+      }
+
+      if (speechQueue) {
         try {
-          const speech = await chatService.synthesizeSpeech(result.data.reply);
-          await deviceTtsService.play(speech.data);
+          await speechQueue.finish();
         } catch (speechError) {
-          console.error("挂件朗读失败：", speechError);
+          console.error("流式挂件朗读失败：", speechError);
           wx.showToast({
             title: speechError.message || "文字回复成功，但朗读失败",
             icon: "none",
             duration: 2800
           });
         } finally {
-          if (!this._pageUnloaded) this.setData({ speaking: false });
+          if (voiceTrace && this._activeVoiceTrace === voiceTrace) this._activeVoiceTrace = null;
         }
       }
+      return result;
     } catch (error) {
-      console.error("发送聊天消息失败：", error);
-      wx.showToast({
-        title: error.message || "发送失败，请稍后重试",
-        icon: "none",
-        duration: 2600
-      });
-    } finally {
-      this.setData({ thinking: false, speaking: false, listening: false });
-      this.processHardwareVoiceQueue();
+      error.partialReply = error.partialReply || partialReply;
+      if (speechQueue && partialReply) {
+        try {
+          await speechQueue.finish();
+        } catch (speechError) {
+          console.error("部分流式回复朗读失败：", speechError);
+        }
+      }
+      throw error;
     }
   },
 
+  stopGeneration() {
+    if (!this.data.generating) return;
+    this._generationCancelled = true;
+    if (this._activeChatRequest && typeof this._activeChatRequest.abort === "function") {
+      this._activeChatRequest.abort();
+    }
+    this.setData({ thinking: false });
+  },
+
+  retryMessage(event) {
+    if (this.data.generating || this.data.speaking || this.data.loading) return;
+    const messageId = event.currentTarget.dataset.messageId;
+    const item = this.data.messages.find(message => message.id === messageId);
+    if (!item || item.role !== "user" || item.status !== "failed") return;
+    this.sendMessage(item.content, null, {
+      userMessageId: item.id,
+      requestId: item.requestId || chatService.createRequestId()
+    });
+  },
+
+  createStreamingSpeechQueue(voiceTrace) {
+    const maximumCharacters = 150;
+    const maximumSegments = 4;
+    let queuedCharacters = 0;
+    let segmentNumber = 0;
+    let playbackChain = Promise.resolve();
+
+    return {
+      enqueue: text => {
+        const available = maximumCharacters - queuedCharacters;
+        if (available <= 0 || segmentNumber >= maximumSegments) return;
+        const speechText = Array.from(typeof text === "string" ? text : "")
+          .slice(0, available)
+          .join("")
+          .trim();
+        if (!speechText) return;
+
+        queuedCharacters += Array.from(speechText).length;
+        segmentNumber += 1;
+        const currentSegment = segmentNumber;
+        const synthesisStartedAt = Date.now();
+        // 句段到达即开始云端合成；用包装结果立即接住失败，避免并发 Promise 未处理。
+        const prepared = chatService.synthesizeSpeech(speechText).then(
+          result => ({ result }),
+          error => ({ error })
+        );
+
+        playbackChain = playbackChain.then(async () => {
+          const synthesized = await prepared;
+          if (synthesized.error) throw synthesized.error;
+          if (currentSegment === 1 && voiceTrace) {
+            voiceTrace.firstSpeechReadyAt = Date.now();
+            voiceTrace.firstSpeechSynthesisMs = voiceTrace.firstSpeechReadyAt - synthesisStartedAt;
+            this._activeVoiceTrace = voiceTrace;
+          }
+          if (!this._pageUnloaded) {
+            this.setData({
+              speaking: true,
+              hardwarePlaybackText: currentSegment === 1
+                ? "首段语音已生成，正在发送到挂件…"
+                : `正在播放后续语音 ${currentSegment}`
+            });
+          }
+          await deviceTtsService.play(synthesized.result.data);
+        });
+      },
+      finish: async () => {
+        await playbackChain;
+        if (voiceTrace) {
+          voiceTrace.completedAt = Date.now();
+          voiceTrace.totalPipelineMs = voiceTrace.completedAt - voiceTrace.recordingStartedAt;
+          if (this._activeVoiceTrace === voiceTrace) this._activeVoiceTrace = null;
+        }
+      }
+    };
+  },
+
+  async playReplySpeech(text, voiceTrace) {
+    const segments = chatService.splitSpeechText(text);
+    if (!segments.length) throw new Error("没有可朗读的回复");
+
+    const synthesisStartedAt = Date.now();
+    const firstPromise = chatService.synthesizeSpeech(segments[0]).then(
+      result => ({ result }),
+      error => ({ error })
+    );
+
+    const first = await firstPromise;
+    if (first.error) throw first.error;
+    // 第一段优先独占云端合成；拿到首段后，再让后续合成与 BLE 下发、播放并行。
+    const remainingPromise = segments.length > 1
+      ? chatService.synthesizeSpeechBatch(segments.slice(1)).then(
+        result => ({ result }),
+        error => ({ error })
+      )
+      : null;
+    if (voiceTrace) {
+      voiceTrace.firstSpeechReadyAt = Date.now();
+      voiceTrace.firstSpeechSynthesisMs = voiceTrace.firstSpeechReadyAt - synthesisStartedAt;
+      this._activeVoiceTrace = voiceTrace;
+    }
+    this.setData({ hardwarePlaybackText: "首段语音已生成，正在发送到挂件…" });
+    await deviceTtsService.play(first.result.data);
+
+    if (remainingPromise) {
+      const remaining = await remainingPromise;
+      if (remaining.error) throw remaining.error;
+      const audioSegments = remaining.result.data && remaining.result.data.segments;
+      if (!Array.isArray(audioSegments) || audioSegments.length !== segments.length - 1) {
+        throw new Error("后续语音生成结果不完整");
+      }
+      for (let index = 0; index < audioSegments.length; index += 1) {
+        this.setData({ hardwarePlaybackText: `正在播放后续语音 ${index + 2}/${segments.length}` });
+        await deviceTtsService.play(audioSegments[index]);
+      }
+    }
+    if (voiceTrace) {
+      voiceTrace.completedAt = Date.now();
+      voiceTrace.totalPipelineMs = voiceTrace.completedAt - voiceTrace.recordingStartedAt;
+      this._activeVoiceTrace = null;
+    }
+  },
+
+  logVoiceLatency(trace) {
+    const firstPlaybackAt = trace.firstPlaybackAt || Date.now();
+    const metrics = {
+      recordingMs: trace.recordingMs || 0,
+      bleUploadMs: trace.bleUploadMs || 0,
+      bleMtu: trace.bleMtu || 0,
+      bleChunkPayload: trace.bleChunkPayload || 0,
+      blePacketCount: trace.blePacketCount || 0,
+      bleEncodedBytes: trace.bleEncodedBytes || 0,
+      asrMode: trace.asrMode || "unknown",
+      asrMs: trace.asrMs || 0,
+      aiAndNetworkMs: trace.aiAndNetworkMs || 0,
+      firstSpeechSynthesisMs: trace.firstSpeechSynthesisMs || 0,
+      bleDownlinkToPlaybackMs: trace.firstSpeechReadyAt ? firstPlaybackAt - trace.firstSpeechReadyAt : 0,
+      pressToFirstPlaybackMs: firstPlaybackAt - trace.recordingStartedAt
+    };
+    console.info("[VOICE_LATENCY] 挂件语音首包播放耗时", metrics);
+  },
+
   clearConversation() {
-    if (this.data.thinking || this.data.speaking || this.data.loading || this.data.listening || this.data.recognizing) return;
+    if (this.data.generating || this.data.speaking || this.data.loading || this.data.listening || this.data.recognizing) return;
 
     wx.showModal({
       title: "清空对话",

@@ -5,7 +5,8 @@ const config = require("../config/ble");
 const protocol = require("../utils/yuntuan-protocol");
 const bufferUtils = require("../utils/buffer");
 
-const RECONNECT_DELAYS = [1000, 3000, 5000];
+const RECONNECT_DELAYS = [1000, 3000, 5000, 10000, 15000, 30000];
+const LAST_DEVICE_STORAGE_KEY = "yuntuan_last_ble_device";
 const initialState = {
   initialized: false,
   available: false,
@@ -14,6 +15,8 @@ const initialState = {
   connected: false,
   ready: false,
   simulated: false,
+  canReconnect: false,
+  rememberedDeviceName: "",
   deviceId: "",
   name: "云团智能挂件",
   devices: [],
@@ -42,6 +45,9 @@ let pendingRequest = null;
 let valueWaiters = [];
 let intentionalDisconnect = false;
 let lastDeviceId = "";
+let lastDeviceName = "";
+let rememberedDeviceLoaded = false;
+let startupReconnectAttempted = false;
 let reconnectIndex = 0;
 let reconnectTimer = null;
 let wasConnected = false;
@@ -159,7 +165,12 @@ function applyEvent(event) {
 }
 
 async function initialize() {
+  loadRememberedDevice();
   await bleService.initialize();
+  if (!startupReconnectAttempted && lastDeviceId && !state.connected && !state.connecting) {
+    startupReconnectAttempted = true;
+    reconnectLastDevice(true).catch(() => {});
+  }
   return result({ device: toDevice(), devices: getDisplayDevices() });
 }
 
@@ -182,11 +193,12 @@ async function connectDevice(deviceId) {
   if (!deviceId) throw new Error("请选择要连接的云团挂件");
   cancelReconnect();
   intentionalDisconnect = false;
-  lastDeviceId = deviceId;
   setState({ connecting: true, ready: false, errorMessage: "", statusText: "正在连接挂件…" });
   try {
     await bleService.connectDevice(deviceId);
     await initializeConnectedDevice();
+    const transport = bleService.getState();
+    if (!transport.simulated) rememberDevice(deviceId, transport.deviceName || state.name);
     reconnectIndex = 0;
     return result({ device: toDevice() });
   } catch (error) {
@@ -201,7 +213,6 @@ async function loadSimulator() {
   cancelReconnect();
   intentionalDisconnect = false;
   await bleService.loadSimulator();
-  lastDeviceId = "YUNTUAN-SIMULATOR";
   await initializeConnectedDevice();
   return result({ device: toDevice() });
 }
@@ -279,6 +290,11 @@ function validateProtocolInfo(info) {
   if (info.protocolMajor !== config.protocolMajor) {
     throw new Error(`设备协议主版本 ${info.protocolMajor} 与小程序版本 ${config.protocolMajor} 不兼容`);
   }
+  if (info.protocolMinor < config.protocolMinor) {
+    throw new Error(
+      `设备协议版本 ${info.protocolMajor}.${info.protocolMinor} 过低，小程序至少需要 ${config.protocolMajor}.${config.protocolMinor}`
+    );
+  }
   if (info.reserved !== undefined && info.reserved !== 0) throw new Error("Protocol Info 保留字节必须为 0");
 }
 
@@ -302,12 +318,15 @@ async function setSocialMode(enabled) {
 
 async function findDevice(alertType, duration) {
   requireReady();
+  if (!protocol.hasCapability(state.capabilities, config.capabilities.findDevice)) {
+    throw new Error("当前挂件不支持查找提醒");
+  }
   await request(
     config.COMMANDS.FIND_DEVICE,
     protocol.buildFindDevicePayload(alertType === undefined ? 0 : alertType, duration || 1500),
     { timeout: 3000, retries: 1 }
   );
-  setState({ lastEventText: "已向挂件发送查找提醒" });
+  setState({ lastEventText: "挂件正在震动、响铃并闪灯" });
   return result({ device: toDevice() });
 }
 
@@ -372,20 +391,29 @@ function sendAndWait(frame, command, requestSequence, timeout) {
 }
 
 async function disconnectDevice() {
+  const wasSimulated = state.simulated;
   intentionalDisconnect = true;
   cancelReconnect();
   rejectPending(new Error("设备已主动断开"));
   rejectValueWaiters(new Error("设备已主动断开"));
   await bleService.disconnectDevice();
-  lastDeviceId = "";
+  if (!wasSimulated) forgetRememberedDevice();
   resetConnectionState("设备已断开");
+  if (wasSimulated && lastDeviceId) {
+    setState({ canReconnect: true, rememberedDeviceName: lastDeviceName });
+  }
   return result({ device: toDevice() });
 }
 
 function scheduleReconnect() {
   if (reconnectTimer || reconnectIndex >= RECONNECT_DELAYS.length) {
     if (reconnectIndex >= RECONNECT_DELAYS.length) {
-      setState({ statusText: "自动重连失败，请手动连接", errorMessage: "设备重连失败" });
+      setState({
+        canReconnect: Boolean(lastDeviceId),
+        rememberedDeviceName: lastDeviceName,
+        statusText: "自动重连失败，可以点击重新连接",
+        errorMessage: "设备重连失败"
+      });
     }
     return;
   }
@@ -394,8 +422,66 @@ function scheduleReconnect() {
   setState({ statusText: `${delay / 1000} 秒后尝试重新连接…` });
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    connectDevice(lastDeviceId).catch(() => scheduleReconnect());
+    connectDevice(lastDeviceId).catch(() => {
+      intentionalDisconnect = false;
+      scheduleReconnect();
+    });
   }, delay);
+}
+
+async function reconnectLastDevice(silent) {
+  loadRememberedDevice();
+  if (!lastDeviceId || lastDeviceId === "YUNTUAN-SIMULATOR") {
+    if (silent) return result({ device: toDevice() });
+    throw new Error("没有可重新连接的挂件，请先搜索设备");
+  }
+  if (state.connected && state.ready) return result({ device: toDevice() });
+  reconnectIndex = 0;
+  cancelReconnect();
+  setState({
+    canReconnect: true,
+    rememberedDeviceName: lastDeviceName,
+    statusText: `正在重新连接${lastDeviceName ? ` ${lastDeviceName}` : "上次的挂件"}…`,
+    errorMessage: ""
+  });
+  try {
+    return await connectDevice(lastDeviceId);
+  } catch (error) {
+    intentionalDisconnect = false;
+    scheduleReconnect();
+    if (silent) return result({ device: toDevice() });
+    throw error;
+  }
+}
+
+function loadRememberedDevice() {
+  if (rememberedDeviceLoaded) return;
+  rememberedDeviceLoaded = true;
+  if (typeof wx === "undefined" || typeof wx.getStorageSync !== "function") return;
+  const saved = wx.getStorageSync(LAST_DEVICE_STORAGE_KEY);
+  if (!saved || typeof saved !== "object" || typeof saved.deviceId !== "string") return;
+  lastDeviceId = saved.deviceId;
+  lastDeviceName = typeof saved.name === "string" ? saved.name : "";
+  setState({ canReconnect: Boolean(lastDeviceId), rememberedDeviceName: lastDeviceName });
+}
+
+function rememberDevice(deviceId, name) {
+  lastDeviceId = deviceId;
+  lastDeviceName = name || "云团智能挂件";
+  setState({ canReconnect: true, rememberedDeviceName: lastDeviceName });
+  if (typeof wx !== "undefined" && typeof wx.setStorageSync === "function") {
+    wx.setStorageSync(LAST_DEVICE_STORAGE_KEY, { deviceId: lastDeviceId, name: lastDeviceName });
+  }
+}
+
+function forgetRememberedDevice() {
+  lastDeviceId = "";
+  lastDeviceName = "";
+  reconnectIndex = 0;
+  setState({ canReconnect: false, rememberedDeviceName: "" });
+  if (typeof wx !== "undefined" && typeof wx.removeStorageSync === "function") {
+    wx.removeStorageSync(LAST_DEVICE_STORAGE_KEY);
+  }
 }
 
 function cancelReconnect() {
@@ -521,6 +607,8 @@ function toDevice() {
     connecting: state.connecting,
     ready: state.ready,
     simulated: state.simulated,
+    canReconnect: state.canReconnect,
+    rememberedDeviceName: state.rememberedDeviceName,
     battery: state.battery,
     chargingState: state.chargingState,
     socialMode: state.socialMode,
@@ -566,6 +654,7 @@ module.exports = {
   stopScan,
   getDisplayDevices,
   connectDevice,
+  reconnectLastDevice,
   loadSimulator,
   disconnectDevice,
   getDevice,

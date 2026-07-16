@@ -1,12 +1,20 @@
 <view class="chat-page">
   <view class="chat-toolbar">
-    <text>对话记录仅保存在本机</text>
-    <button class="clear-btn" disabled="{{thinking || speaking || loading}}" bindtap="clearConversation">清空</button>
+    <text>记录保存在本机，最近对话会用于连续交流</text>
+    <button wx:if="{{generating}}" class="stop-btn" bindtap="stopGeneration">停止回复</button>
+    <button wx:else class="clear-btn" disabled="{{speaking || loading}}" bindtap="clearConversation">清空</button>
   </view>
   <scroll-view class="messages" scroll-y scroll-into-view="{{scrollIntoView}}">
     <view wx:if="{{loading}}" class="loading">正在连接云团…</view>
     <view wx:for="{{messages}}" wx:key="id" class="message-row {{item.role}}">
-      <view class="bubble">{{item.content}}</view>
+      <view class="message-content">
+        <view class="bubble">{{item.content}}</view>
+        <view wx:if="{{item.role === 'user' && item.status === 'sending'}}" class="message-status">发送中…</view>
+        <view wx:if="{{item.role === 'user' && item.status === 'failed'}}" class="message-error">
+          <text>{{item.errorMessage || '发送失败'}}</text>
+          <button class="retry-btn" data-message-id="{{item.id}}" bindtap="retryMessage">重试</button>
+        </view>
+      </view>
     </view>
     <view wx:if="{{thinking}}" class="message-row assistant"><view class="bubble thinking">云团正在思考…</view></view>
     <view wx:if="{{speaking}}" class="message-row assistant"><view class="bubble thinking">云团正在说话…</view></view>
@@ -18,15 +26,15 @@
         class="chat-input"
         value="{{inputValue}}"
         placeholder="输入想说的话"
-        maxlength="200"
+        maxlength="500"
         confirm-type="send"
-        disabled="{{thinking || speaking || loading || listening || recognizing}}"
+        disabled="{{generating || speaking || loading || listening || recognizing}}"
         bindinput="onInput"
         bindconfirm="sendTextMessage"
       />
       <button
         class="send-btn"
-        disabled="{{thinking || speaking || loading || listening || recognizing || !inputValue}}"
+        disabled="{{generating || speaking || loading || listening || recognizing || !inputValue}}"
         bindtap="sendTextMessage"
       >发送</button>
     </view>
@@ -42,7 +50,7 @@
     </view>
     <view wx:if="{{hardwareVoiceSupported}}" class="divider"><text>手机麦克风备用</text></view>
     <text class="voice-hint">{{listening ? '正在聆听，请说话…' : (recognizing ? '正在识别，请稍候…' : (thinking ? '正在思考，请稍候…' : (speaking ? '云团正在说话…' : '点击按钮开始说话')))}}</text>
-    <button class="voice-btn {{listening ? 'listening' : ''}}" disabled="{{thinking || speaking || loading || recognizing}}" bindtap="toggleListening">
+    <button class="voice-btn {{listening ? 'listening' : ''}}" disabled="{{generating || speaking || loading || recognizing}}" bindtap="toggleListening">
       {{listening ? '结束说话' : (recognizing ? '识别中…' : (thinking ? '思考中…' : (speaking ? '说话中…' : '开始说话')))}}
     </button>
   </view>

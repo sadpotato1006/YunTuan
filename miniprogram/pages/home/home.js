@@ -8,7 +8,10 @@ Page({
       // 页面只通过 service 获取首页业务数据。
       const [overview, emotion] = await Promise.all([
         deviceService.getHomeOverview(),
-        emotionService.getEmotionSummary()
+        emotionService.getEmotionSummary().catch(error => {
+          console.warn("首页情绪摘要暂不可用：", error.message);
+          return { code: 0, message: "degraded", data: { latest: null } };
+        })
       ]);
       this.setData(Object.assign(
         { loading: false, latestEmotion: emotion.data.latest },

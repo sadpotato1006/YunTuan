@@ -14,16 +14,36 @@
       <button
         wx:for="{{options}}"
         wx:key="name"
-        class="emotion-option"
+        class="emotion-option {{selectedEmotion === item.name ? 'selected' : ''}}"
         disabled="{{saving}}"
         data-name="{{item.name}}"
-        bindtap="selectEmotion"
+        bindtap="chooseEmotion"
       >
         <text class="option-icon">{{item.icon}}</text>
         <text>{{item.name}}</text>
       </button>
     </view>
-    <text class="checkin-tip">每天保留一条记录，再次选择会更新今天的心情。</text>
+    <view class="note-field">
+      <view class="note-label">想补充一两句话吗？<text>选填</text></view>
+      <textarea
+        class="note-input"
+        value="{{noteValue}}"
+        maxlength="100"
+        auto-height
+        disabled="{{saving}}"
+        placeholder="例如：今天和老朋友聊了会儿天"
+        bindfocus="onNoteFocus"
+        bindinput="onNoteInput"
+      />
+      <text class="note-count">{{noteValue.length}}/100</text>
+    </view>
+    <button
+      class="save-emotion-btn"
+      loading="{{saving}}"
+      disabled="{{saving || !selectedEmotion}}"
+      bindtap="saveEmotion"
+    >保存今天的心情</button>
+    <text class="checkin-tip">点击备注框会自动清空默认文字；留空保存时仍会使用默认文字。每天保留一条记录，再次选择会更新今天的心情。</text>
   </view>
 
   <view wx:if="{{loading}}" class="loading">正在整理情绪记录…</view>
@@ -35,7 +55,7 @@
     <view wx:for="{{records}}" wx:key="id" class="record card">
       <view class="record-top"><text class="date">{{item.date}}</text><text class="score">{{item.score}} 分</text></view>
       <view class="emotion-name">{{item.name}}</view>
-      <text class="note">{{item.note}}</text>
+      <text wx:if="{{item.note}}" class="note">{{item.note}}</text>
     </view>
   </view>
 </view>

@@ -489,11 +489,12 @@ async function writeBuffer(serviceId, characteristicId, value, writeType, option
   }
 }
 
-async function negotiateMTU(preferredMTU) {
+async function negotiateMTU(preferredMTU, writeType) {
   requireConnected();
   if (state.simulated) return 247;
 
   const requested = Number.isInteger(preferredMTU) ? preferredMTU : 247;
+  const selectedWriteType = writeType === "writeNoResponse" ? "writeNoResponse" : "write";
   try {
     await ble.setMTU(state.deviceId, requested);
     addLog("MTU", "已请求协商 BLE MTU", String(requested));
@@ -503,9 +504,20 @@ async function negotiateMTU(preferredMTU) {
   }
 
   try {
-    const result = await ble.getMTU(state.deviceId, "write");
+    const result = await ble.getMTU(state.deviceId, selectedWriteType);
     const mtu = result && Number.isInteger(result.mtu) ? result.mtu : 23;
-    addLog("MTU", "当前 BLE MTU", String(mtu));
+    addLog("MTU", "当前 BLE MTU", `${mtu} | ${selectedWriteType}`);
+    console.info("[BLE_MTU] 当前协商结果", {
+      requested,
+      actual: mtu,
+      writeType: selectedWriteType
+    });
+    if (mtu < 100) {
+      console.warn("[BLE_MTU] 当前 MTU 较低，语音传输会明显变慢", {
+        actual: mtu,
+        writeType: selectedWriteType
+      });
+    }
     return mtu;
   } catch (error) {
     addLog("MTU", "无法读取 MTU，按最小值兼容", error.message);

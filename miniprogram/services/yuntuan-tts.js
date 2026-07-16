@@ -2,7 +2,7 @@ const bleService = require("./ble");
 const config = require("../config/ble");
 const codec = require("../utils/yuntuan-audio-codec");
 
-const TTS_PROTOCOL_VERSION = 1;
+const TTS_PROTOCOL_VERSION = 2;
 const TTS_CODEC_IMA_ADPCM = 1;
 const CONTROL_BEGIN = 0x01;
 const CONTROL_END = 0x02;
@@ -87,14 +87,16 @@ async function attach(services) {
   }
 
   setState({ supported: true, attached: false, statusText: "正在初始化挂件朗读…", errorMessage: "" });
-  const mtu = await bleService.negotiateMTU(247);
+  const mtu = await bleService.negotiateMTU(247, "writeNoResponse");
   await bleService.setCharacteristicNotify(config.UUIDS.ttsService, config.UUIDS.ttsStatus, true);
   setState({
     supported: true,
     attached: true,
     phase: "idle",
     mtu,
-    statusText: "挂件朗读已就绪",
+    statusText: mtu < 100
+      ? `挂件朗读已就绪，但当前 MTU ${mtu} 会使传输较慢`
+      : `挂件朗读已就绪（MTU ${mtu}）`,
     errorMessage: ""
   });
   return true;
@@ -119,8 +121,10 @@ function handleValue(result) {
     activeSession.error = error;
     setState({ phase: "error", statusText: "挂件朗读失败", errorMessage: error.message });
   } else if (status.type === STATUS_PLAYING) {
-    setState({ phase: "playing", progress: 100, statusText: "云团正在朗读…", errorMessage: "" });
+    activeSession.playing = true;
+    setState({ phase: "playing", statusText: "云团正在朗读…", errorMessage: "" });
   } else if (status.type === STATUS_COMPLETE) {
+    activeSession.complete = true;
     setState({ phase: "complete", progress: 100, statusText: "云团朗读完成", errorMessage: "" });
   }
 }
@@ -132,7 +136,7 @@ async function play(payload) {
   const id = nextSessionId();
   const chunkPayload = Math.max(15, Math.min(239, state.mtu - 8));
   const totalChunks = Math.ceil(audio.data.length / chunkPayload);
-  activeSession = { id, error: null };
+  activeSession = { id, error: null, playing: false, complete: false };
   setState({
     phase: "sending",
     sessionId: id,
@@ -151,6 +155,13 @@ async function play(payload) {
     readyPromise.catch(() => {});
     await sendControl(createBeginPacket(id, audio, chunkPayload));
     await readyPromise;
+
+    const playingPromise = waitForStatus(
+      status => status.sessionId === id && (status.type === STATUS_PLAYING || status.type === STATUS_ERROR),
+      Math.max(6000, state.durationMs + 4000),
+      "等待挂件开始播放超时"
+    );
+    playingPromise.catch(() => {});
 
     let sequence = 0;
     while (sequence < totalChunks) {
@@ -175,24 +186,24 @@ async function play(payload) {
       if (ack.nextSequence <= sequence && sequence !== 0) throw new Error("挂件没有继续接收朗读数据");
       sequence = ack.nextSequence;
       const progress = Math.min(100, Math.floor(sequence * 100 / totalChunks));
-      setState({ progress, statusText: `正在把云团语音发送给挂件 ${progress}%` });
+      if (activeSession && activeSession.playing) {
+        setState({ progress, phase: "playing", statusText: "云团正在朗读…" });
+      } else {
+        setState({ progress, statusText: `正在把云团语音发送给挂件 ${progress}%` });
+      }
     }
 
-    const playingPromise = waitForStatus(
-      status => status.sessionId === id && (status.type === STATUS_PLAYING || status.type === STATUS_ERROR),
-      4000,
-      "等待挂件开始播放超时"
-    );
-    playingPromise.catch(() => {});
-    await sendControl(createEndPacket(id, audio.crc32));
-    const playing = await playingPromise;
-    if (playing.type === STATUS_ERROR) throw new Error(getDeviceErrorMessage(playing.errorCode));
-
-    const complete = await waitForStatus(
+    const completePromise = waitForStatus(
       status => status.sessionId === id && (status.type === STATUS_COMPLETE || status.type === STATUS_ERROR),
       state.durationMs + 8000,
       "等待挂件播放完成超时"
     );
+    completePromise.catch(() => {});
+    await sendControl(createEndPacket(id, audio.crc32));
+    const playing = await playingPromise;
+    if (playing.type === STATUS_ERROR) throw new Error(getDeviceErrorMessage(playing.errorCode));
+
+    const complete = await completePromise;
     if (complete.type === STATUS_ERROR) throw new Error(getDeviceErrorMessage(complete.errorCode));
     return getState();
   } catch (error) {

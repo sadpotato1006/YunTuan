@@ -31,6 +31,8 @@ Page({
           connecting: state.connecting,
           ready: state.ready,
           simulated: state.simulated,
+          canReconnect: state.canReconnect,
+          rememberedDeviceName: state.rememberedDeviceName,
           battery: state.battery,
           chargingState: state.chargingState,
           socialMode: state.socialMode,
@@ -141,6 +143,20 @@ Page({
     }
   },
 
+  async reconnectLastDevice() {
+    if (this.data.operating) return;
+    this.setData({ operating: true });
+    try {
+      const result = await deviceService.reconnectLastDevice();
+      this.setData({ device: result.data.device });
+      wx.showToast({ title: "挂件重新连接成功", icon: "success" });
+    } catch (error) {
+      this.showError(error);
+    } finally {
+      this.setData({ operating: false });
+    }
+  },
+
   async toggleSocialMode(event) {
     if (!this.data.device.ready || this.data.operating) return;
     const enabled = event.detail.value;
@@ -162,7 +178,7 @@ Page({
     this.setData({ operating: true });
     try {
       await deviceService.findDevice();
-      wx.showToast({ title: "已发送振动提醒", icon: "success" });
+      wx.showToast({ title: "挂件正在提醒", icon: "success" });
     } catch (error) {
       this.showError(error);
     } finally {

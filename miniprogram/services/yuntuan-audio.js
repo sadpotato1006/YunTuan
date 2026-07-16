@@ -1,8 +1,9 @@
 const bleService = require("./ble");
 const config = require("../config/ble");
 const codec = require("../utils/yuntuan-audio-codec");
+const realtimeAsr = require("./yuntuan-realtime-asr");
 
-const AUDIO_PROTOCOL_VERSION = 1;
+const AUDIO_PROTOCOL_VERSION = 2;
 const AUDIO_CODEC_IMA_ADPCM = 1;
 const STATUS_META = 0x11;
 const STATUS_RECORDING = 0x10;
@@ -14,6 +15,7 @@ const CONTROL_COMPLETE = 0x02;
 const CONTROL_ABORT = 0x03;
 const ACK_WINDOW = 8;
 const MAX_RECORD_SECONDS = 15;
+const MAX_ENCODED_BYTES = 16000 * MAX_RECORD_SECONDS / 2;
 
 const initialState = {
   supported: false,
@@ -34,6 +36,7 @@ let pendingCompletions = [];
 let session = null;
 let controlQueue = Promise.resolve();
 let finishing = false;
+let recordingStartedAt = 0;
 
 bleService.subscribe(handleTransportState);
 bleService.subscribeValues(handleValue);
@@ -73,6 +76,7 @@ function subscribeCompleted(listener) {
 function handleTransportState(transport) {
   if (transport.connected) return;
   const wasActive = session || state.phase === "recording" || state.phase === "receiving";
+  if (session) realtimeAsr.cancel(session.id, "BLE 连接已断开");
   session = null;
   finishing = false;
   setState({
@@ -98,7 +102,7 @@ async function attach(services) {
   }
 
   setState({ supported: true, attached: false, statusText: "正在初始化挂件语音…", errorMessage: "" });
-  const mtu = await bleService.negotiateMTU(247);
+  const mtu = await bleService.negotiateMTU(247, "write");
   await bleService.setCharacteristicNotify(
     config.UUIDS.audioService,
     config.UUIDS.audioStatus,
@@ -113,7 +117,9 @@ async function attach(services) {
     attached: true,
     mtu,
     phase: "idle",
-    statusText: "挂件语音已就绪，短按 PTT 键后说话",
+    statusText: mtu < 100
+      ? `挂件语音已就绪，但当前 MTU ${mtu} 会使传输较慢`
+      : `挂件语音已就绪（MTU ${mtu}），短按 PTT 键后说话`,
     errorMessage: ""
   });
   return true;
@@ -137,6 +143,8 @@ function handleStatus(bytes) {
   if (bytes[0] === STATUS_RECORDING) {
     if (bytes.length !== 4) throw new Error("挂件录音状态长度错误");
     const sessionId = readUint16(bytes, 1);
+    if (session) realtimeAsr.cancel(session.id, "新的硬件录音已经开始");
+    recordingStartedAt = Date.now();
     session = null;
     finishing = false;
     setState({
@@ -156,13 +164,15 @@ function handleStatus(bytes) {
   }
 
   if (bytes[0] === STATUS_END) {
-    if (bytes.length !== 7) throw new Error("挂件录音结束状态长度错误");
+    if (bytes.length !== 15) throw new Error("挂件录音结束状态长度错误");
     const sessionId = readUint16(bytes, 1);
-    const expectedCrc = readUint32(bytes, 3);
+    const sampleCount = readUint32(bytes, 3);
+    const encodedBytes = readUint32(bytes, 7);
+    const expectedCrc = readUint32(bytes, 11);
     if (!session || session.id !== sessionId) throw new Error("挂件录音会话不匹配");
     if (!finishing) {
       finishing = true;
-      finishSession(expectedCrc).catch(failSession);
+      finishSession(sampleCount, encodedBytes, expectedCrc).catch(failSession);
     }
     return;
   }
@@ -170,6 +180,7 @@ function handleStatus(bytes) {
   if (bytes[0] === STATUS_ERROR) {
     if (bytes.length < 4) throw new Error("挂件语音错误状态长度错误");
     const errorCode = bytes[3];
+    if (session) realtimeAsr.cancel(session.id, getDeviceErrorMessage(errorCode));
     throw new Error(getDeviceErrorMessage(errorCode));
   }
 }
@@ -182,8 +193,8 @@ function beginSession(bytes) {
   const audioCodec = bytes[4];
   const bitsPerSample = bytes[5];
   const sampleRate = readUint16(bytes, 6);
-  const sampleCount = readUint32(bytes, 8);
-  const encodedBytes = readUint32(bytes, 12);
+  const announcedSampleCount = readUint32(bytes, 8);
+  const announcedEncodedBytes = readUint32(bytes, 12);
   const initialPredictor = readInt16(bytes, 16);
   const initialIndex = bytes[18];
   const chunkPayload = bytes[19];
@@ -191,64 +202,73 @@ function beginSession(bytes) {
   if (!id || audioCodec !== AUDIO_CODEC_IMA_ADPCM || bitsPerSample !== 16) {
     throw new Error("挂件录音编码参数不受支持");
   }
-  if (sampleRate !== 16000 || !sampleCount || sampleCount > sampleRate * MAX_RECORD_SECONDS) {
+  if (sampleRate !== 16000 || announcedSampleCount !== 0 || announcedEncodedBytes !== 0) {
     throw new Error("挂件录音采样参数不正确");
   }
-  if (!encodedBytes || encodedBytes !== Math.ceil((sampleCount - 1) / 2)) {
-    throw new Error("挂件录音压缩长度不正确");
-  }
-  if (!chunkPayload || chunkPayload > 239 || initialIndex > 88) {
+  if (chunkPayload < 14 || chunkPayload > 239 || initialIndex > 88) {
     throw new Error("挂件录音分包参数不正确");
   }
 
-  const totalChunks = Math.ceil(encodedBytes / chunkPayload);
+  if (session) realtimeAsr.cancel(session.id, "硬件重新开始发送录音流");
+  const transferStartedAt = Date.now();
   session = {
     id,
     sampleRate,
-    sampleCount,
-    encodedBytes,
     initialPredictor,
     initialIndex,
     chunkPayload,
-    totalChunks,
     expectedSequence: 0,
     receivedBytes: 0,
-    parts: []
+    parts: [],
+    finalPacketSeen: false,
+    streamDecoder: codec.createImaAdpcmStreamDecoder(initialPredictor, initialIndex),
+    realtimeTranscriptPromise: realtimeAsr.start(id),
+    recordingStartedAt: recordingStartedAt || transferStartedAt,
+    transferStartedAt
   };
   finishing = false;
   setState({
     phase: "receiving",
     sessionId: id,
     progress: 0,
-    durationMs: Math.round(sampleCount * 1000 / sampleRate),
-    statusText: "正在接收挂件录音 0%",
+    durationMs: 0,
+    statusText: "正在录音、上传并实时识别…",
     errorMessage: ""
   });
 }
 
 function handleData(bytes) {
-  if (bytes.length < 6 || bytes[0] !== DATA_PACKET) throw new Error("挂件录音分片格式错误");
+  if (bytes.length < 7 || bytes[0] !== DATA_PACKET) throw new Error("挂件录音分片格式错误");
   if (!session) return;
 
   const sessionId = readUint16(bytes, 1);
   const sequence = readUint16(bytes, 3);
+  const flags = bytes[5];
   if (sessionId !== session.id) return;
-  const payload = bytes.slice(5);
+  if (flags & ~0x01) throw new Error("挂件录音分片标志不正确");
+  const isFinalPacket = Boolean(flags & 0x01);
+  const payload = bytes.slice(6);
   if (!payload.length || payload.length > session.chunkPayload) throw new Error("挂件录音分片长度错误");
+  if (!isFinalPacket && payload.length !== session.chunkPayload) throw new Error("挂件录音流提前出现短分片");
 
   if (sequence === session.expectedSequence) {
     session.parts.push(payload);
     session.receivedBytes += payload.length;
     session.expectedSequence += 1;
-    if (session.receivedBytes > session.encodedBytes) throw new Error("挂件录音数据超出声明长度");
+    if (session.receivedBytes > MAX_ENCODED_BYTES) throw new Error("挂件录音超过最长时限");
+    if (isFinalPacket) session.finalPacketSeen = true;
+
+    const pcm = session.streamDecoder.push(payload);
+    if (pcm.length) realtimeAsr.pushPcm(session.id, pcm);
 
     const shouldAck = session.expectedSequence % ACK_WINDOW === 0 ||
-      session.expectedSequence === session.totalChunks;
+      isFinalPacket;
     if (shouldAck) sendAck(session.id, session.expectedSequence);
 
     if (shouldAck || session.expectedSequence === 1) {
-      const progress = Math.min(100, Math.floor(session.receivedBytes * 100 / session.encodedBytes));
-      setState({ progress, statusText: `正在接收挂件录音 ${progress}%` });
+      const durationMs = Math.round((1 + session.receivedBytes * 2) * 1000 / session.sampleRate);
+      const progress = Math.min(99, Math.floor(durationMs * 100 / (MAX_RECORD_SECONDS * 1000)));
+      setState({ progress, durationMs, statusText: "正在录音、上传并实时识别…" });
     }
     return;
   }
@@ -257,38 +277,72 @@ function handleData(bytes) {
   sendAck(session.id, session.expectedSequence);
 }
 
-async function finishSession(expectedCrc) {
+async function finishSession(sampleCount, encodedBytes, expectedCrc) {
   const current = session;
+  const recordingFinishedAt = Date.now();
   if (!current) throw new Error("没有可完成的挂件录音会话");
-  if (current.expectedSequence !== current.totalChunks || current.receivedBytes !== current.encodedBytes) {
+  if (!sampleCount || sampleCount > current.sampleRate * MAX_RECORD_SECONDS ||
+      encodedBytes !== Math.ceil((sampleCount - 1) / 2) ||
+      encodedBytes > MAX_ENCODED_BYTES) {
+    throw new Error("挂件录音结束参数不正确");
+  }
+  const totalChunks = Math.ceil(encodedBytes / current.chunkPayload);
+  if (!current.finalPacketSeen || current.expectedSequence !== totalChunks ||
+      current.receivedBytes !== encodedBytes) {
     throw new Error("挂件录音尚未接收完整");
   }
 
   setState({ phase: "decoding", progress: 100, statusText: "正在整理挂件录音…" });
-  const compressed = codec.concat(current.parts, current.encodedBytes);
+  const compressed = codec.concat(current.parts, encodedBytes);
   if (codec.crc32(compressed) !== expectedCrc) throw new Error("挂件录音 CRC32 校验失败");
+
+  const finalPcm = current.streamDecoder.finish(sampleCount);
+  if (finalPcm.length) realtimeAsr.pushPcm(current.id, finalPcm);
+  realtimeAsr.finish(current.id).catch(() => {});
+  const realtimeTranscriptPromise = current.realtimeTranscriptPromise;
 
   const pcm = codec.decodeImaAdpcm(
     compressed,
-    current.sampleCount,
+    sampleCount,
     current.initialPredictor,
     current.initialIndex
   );
   const wav = codec.createPcmWav(pcm, current.sampleRate);
-  const filePath = `${wx.env.USER_DATA_PATH}/yuntuan-voice-${current.id}-${Date.now()}.wav`;
-  await writeFile(filePath, wav);
-  try {
-    await sendControl(createSessionControl(CONTROL_COMPLETE, current.id));
-  } catch (error) {
-    // 文件已经完整落盘，不能因为释放设备缓存的确认写失败而丢掉用户这句话。
-    console.warn("确认挂件录音完成失败，设备会在超时后自行释放缓存：", error);
+  let filePath = "";
+  let audioBase64 = "";
+  if (typeof wx.arrayBufferToBase64 === "function") {
+    audioBase64 = wx.arrayBufferToBase64(wav);
+  } else {
+    // 兼容缺少 ArrayBuffer Base64 API 的旧版微信，仅在这种情况下落临时文件。
+    filePath = `${wx.env.USER_DATA_PATH}/yuntuan-voice-${current.id}-${Date.now()}.wav`;
+    await writeFile(filePath, wav);
   }
+  sendControl(createSessionControl(CONTROL_COMPLETE, current.id)).catch(error => {
+    // 音频已经完整重建，不能因为释放设备缓存的确认写失败而丢掉用户这句话。
+    console.warn("确认挂件录音完成失败，设备会在超时后自行释放缓存：", error);
+  });
 
+  const completedAt = Date.now();
   const completed = {
     sessionId: current.id,
     filePath,
+    audioBase64,
     voiceFormat: "wav",
-    durationMs: Math.round(current.sampleCount * 1000 / current.sampleRate)
+    durationMs: Math.round(sampleCount * 1000 / current.sampleRate),
+    realtimeTranscriptPromise,
+    timing: {
+      recordingStartedAt: current.recordingStartedAt,
+      recordingFinishedAt,
+      transferStartedAt: current.transferStartedAt,
+      completedAt,
+      recordingMs: Math.round(sampleCount * 1000 / current.sampleRate),
+      transferMs: Math.max(0, completedAt - recordingFinishedAt),
+      overlappedTransferMs: Math.max(0, recordingFinishedAt - current.transferStartedAt),
+      mtu: state.mtu,
+      chunkPayload: current.chunkPayload,
+      totalChunks,
+      encodedBytes
+    }
   };
   session = null;
   finishing = false;
@@ -342,6 +396,7 @@ function sendControl(packet) {
 function failSession(error) {
   const message = error && error.message ? error.message : "挂件录音传输失败";
   const sessionId = session && session.id;
+  if (sessionId) realtimeAsr.cancel(sessionId, message);
   session = null;
   finishing = false;
   if (sessionId && bleService.getState().connected) {

@@ -5,7 +5,16 @@
 .checkin-card { padding-bottom: 24rpx; }
 .emotion-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16rpx; }
 .emotion-option { min-height: 118rpx; margin: 0; padding: 14rpx; border-radius: 18rpx; background: #edf3ee !important; color: #425b54 !important; font-size: 29rpx; display: flex; align-items: center; justify-content: center; }
+.emotion-option.selected { background: #dcebe3 !important; color: #2f5f51 !important; box-shadow: inset 0 0 0 3rpx #6f9a8b; }
 .option-icon { font-size: 42rpx; margin-right: 12rpx; }
+.note-field { position: relative; margin-top: 24rpx; text-align: left; }
+.note-label { margin-bottom: 12rpx; color: #425b54; font-size: 28rpx; }
+.note-label text { margin-left: 10rpx; color: #98a39f; font-size: 24rpx; }
+.note-input { width: 100%; min-height: 116rpx; box-sizing: border-box; padding: 20rpx 22rpx 42rpx; border-radius: 16rpx; background: #f3f6f3; color: #34443f; font-size: 29rpx; line-height: 1.55; }
+.note-count { position: absolute; right: 18rpx; bottom: 14rpx; color: #9aa5a1; font-size: 22rpx; }
+.save-emotion-btn { min-height: 86rpx; margin-top: 22rpx; border-radius: 18rpx; background: #52796f !important; color: #fff !important; font-size: 30rpx; }
+.save-emotion-btn[disabled] { background: #b5c3be !important; color: #f5f6f5 !important; }
+.save-emotion-btn::after { border: 0; }
 .checkin-tip { display: block; margin-top: 18rpx; color: #87938f; font-size: 25rpx; line-height: 1.5; }
 .record { border-left: 8rpx solid #8aafa0; }
 .record-top { display: flex; justify-content: space-between; color: #71807b; font-size: 28rpx; }

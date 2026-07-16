@@ -50,7 +50,8 @@ function initialize() { return bleDevice.initialize(); }
 function startScan() { return bleDevice.startScan(); }
 function stopScan() { return bleDevice.stopScan(); }
 function loadSimulator() { return bleDevice.loadSimulator(); }
-function findDevice() { return bleDevice.findDevice(0, 1500); }
+function reconnectLastDevice() { return bleDevice.reconnectLastDevice(false); }
+function findDevice() { return bleDevice.findDevice(2, 1800); }
 function ping() { return bleDevice.ping(); }
 function refreshStatus() { return bleDevice.getStatus(); }
 function subscribe(listener) { return bleDevice.subscribe(listener); }
@@ -65,6 +66,7 @@ module.exports = {
   startScan,
   stopScan,
   loadSimulator,
+  reconnectLastDevice,
   findDevice,
   ping,
   refreshStatus,

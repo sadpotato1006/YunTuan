@@ -117,6 +117,82 @@ function decodeImaAdpcm(data, sampleCount, initialPredictor, initialIndex) {
   return samples;
 }
 
+function createImaAdpcmStreamDecoder(initialPredictor, initialIndex) {
+  const state = {
+    predictor: clamp(initialPredictor | 0, -32768, 32767),
+    index: clamp(initialIndex | 0, 0, 88)
+  };
+  let pendingByte = null;
+  let emittedInitial = false;
+  let decodedSamples = 0;
+  let finished = false;
+
+  function emitInitial(output) {
+    if (emittedInitial) return;
+    output.push(state.predictor);
+    emittedInitial = true;
+    decodedSamples += 1;
+  }
+
+  function decodePackedByte(packed, output, maximumSamples) {
+    if (decodedSamples < maximumSamples) {
+      output.push(decodeNibble(packed & 0x0F, state));
+      decodedSamples += 1;
+    }
+    if (decodedSamples < maximumSamples) {
+      output.push(decodeNibble((packed >> 4) & 0x0F, state));
+      decodedSamples += 1;
+    }
+  }
+
+  return {
+    push(value) {
+      if (finished) throw new Error("ADPCM stream is already finished");
+      const bytes = toUint8Array(value);
+      const output = [];
+      emitInitial(output);
+      if (!bytes.length) return Int16Array.from(output);
+
+      let offset = 0;
+      if (pendingByte !== null) {
+        decodePackedByte(pendingByte, output, Number.MAX_SAFE_INTEGER);
+        pendingByte = null;
+      }
+      while (offset + 1 < bytes.length) {
+        decodePackedByte(bytes[offset], output, Number.MAX_SAFE_INTEGER);
+        offset += 1;
+      }
+      pendingByte = bytes[offset];
+      return Int16Array.from(output);
+    },
+
+    finish(sampleCount) {
+      if (finished) throw new Error("ADPCM stream is already finished");
+      if (!Number.isInteger(sampleCount) || sampleCount < 1) {
+        throw new Error("ADPCM stream sample count is invalid");
+      }
+      finished = true;
+      const output = [];
+      emitInitial(output);
+      if (sampleCount < decodedSamples) {
+        throw new Error("ADPCM stream contains more samples than declared");
+      }
+      if (pendingByte !== null) {
+        decodePackedByte(pendingByte, output, sampleCount);
+        pendingByte = null;
+      }
+      if (decodedSamples !== sampleCount) {
+        throw new Error("ADPCM stream ended before all samples were decoded");
+      }
+      return Int16Array.from(output);
+    },
+
+    getDecodedSampleCount() {
+      return decodedSamples;
+    }
+  };
+}
+
 function createPcmWav(samples, sampleRate) {
   if (!(samples instanceof Int16Array) || !samples.length) throw new Error("没有可写入 WAV 的 PCM 数据");
   if (!Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 48000) {
@@ -185,6 +261,7 @@ function writeAscii(view, offset, text) {
 module.exports = {
   encodeImaAdpcm,
   decodeImaAdpcm,
+  createImaAdpcmStreamDecoder,
   createPcmWav,
   crc32,
   concat,

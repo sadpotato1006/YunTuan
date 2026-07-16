@@ -18,7 +18,7 @@
     <view wx:if="{{latestEmotion}}" class="card mood-card" bindtap="goEmotion">
       <view>
         <view class="section-title">最近心情</view>
-        <text class="muted">{{latestEmotion.date}} · {{latestEmotion.note}}</text>
+        <text class="muted">{{latestEmotion.date}}<text wx:if="{{latestEmotion.note}}"> · {{latestEmotion.note}}</text></text>
       </view>
       <view class="mood-score"><text>{{latestEmotion.name}}</text><text>{{latestEmotion.score}} 分</text></view>
     </view>
