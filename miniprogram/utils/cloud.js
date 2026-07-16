@@ -1,4 +1,5 @@
 const config = require("../config/index");
+const CLOUD_CALL_TIMEOUT_MS = 30000;
 
 /**
  * 统一调用微信云函数，并把云端错误转换为页面可直接展示的 Error。
@@ -24,32 +25,55 @@ function callCloudFunction(name, data) {
       return;
     }
 
-    wx.cloud.callFunction({
-      name,
-      data: data || {},
-      success(response) {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("云函数调用超时，请稍后重试"));
+    }, CLOUD_CALL_TIMEOUT_MS);
+    const resolveOnce = value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const rejectOnce = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+
+    try {
+      wx.cloud.callFunction({
+        name,
+        data: data || {},
+        success(response) {
         const result = response && response.result;
         if (!result) {
-          reject(new Error("云函数没有返回处理结果"));
+          rejectOnce(new Error("云函数没有返回处理结果"));
           return;
         }
         // 所有云函数都必须遵循统一的 code/message/data 返回格式。
         if (typeof result !== "object" || typeof result.code !== "number" || !("data" in result)) {
-          reject(new Error("云函数返回的数据格式不正确"));
+          rejectOnce(new Error("云函数返回的数据格式不正确"));
           return;
         }
         if (result.code !== 0) {
-          reject(new Error(result.message || "云函数调用失败"));
+          rejectOnce(new Error(result.message || "云函数调用失败"));
           return;
         }
-        resolve(result);
-      },
-      fail(error) {
+          resolveOnce(result);
+        },
+        fail(error) {
         // 只记录微信返回的错误信息，不输出任何 AI 密钥或敏感配置。
         console.error(`调用云函数 ${name} 失败：`, error);
-        reject(new Error(getFriendlyCloudError(error)));
-      }
-    });
+          rejectOnce(new Error(getFriendlyCloudError(error)));
+        }
+      });
+    } catch (error) {
+      rejectOnce(error instanceof Error ? error : new Error("云函数调用失败"));
+    }
   });
 }
 

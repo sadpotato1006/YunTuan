@@ -5,6 +5,7 @@
     "pages/ble-debug/ble-debug",
     "pages/device/device",
     "pages/emotion/emotion",
+    "pages/social-profile/social-profile",
     "pages/settings/settings"
   ],
   "window": {

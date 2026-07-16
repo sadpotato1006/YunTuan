@@ -4,6 +4,8 @@ const PCM_FRAME_BYTES = 6400; // 200 ms, 16 kHz, mono, PCM16
 const SEND_INTERVAL_MS = 190;
 const CONNECT_TIMEOUT_MS = 6000;
 const FINAL_TIMEOUT_MS = 10000;
+const START_TIMEOUT_MS = 8000;
+const SOCKET_SEND_TIMEOUT_MS = 3000;
 
 let activeSession = null;
 
@@ -35,6 +37,9 @@ function start(sessionId) {
   // promise. Keep that expected cancellation from becoming an unhandled one.
   context.result.catch(() => {});
   activeSession = context;
+  context.timers.push(setTimeout(() => {
+    if (!context.ready) fail(context, new Error("启动实时语音识别超时"));
+  }, START_TIMEOUT_MS));
 
   chatService.getRealtimeAsrTicket()
     .then(response => connect(context, response && response.data && response.data.url))
@@ -152,35 +157,70 @@ function drain(context) {
   const delay = Math.max(0, context.nextSendAt - Date.now());
   context.sending = true;
   context.timers.push(setTimeout(() => {
-    if (context.settled) return;
-    const frame = takeBytes(context, frameLength);
-    context.socket.send({
-      data: frame.buffer,
-      success() {
+    if (context.settled) {
+      context.sending = false;
+      return;
+    }
+    let frame;
+    try {
+      frame = takeBytes(context, frameLength);
+    } catch (error) {
+      fail(context, error);
+      return;
+    }
+    sendSocketData(context, frame.buffer, "上传实时语音数据超时", () => {
+      if (!context.settled) {
         context.sending = false;
         context.nextSendAt = Date.now() + SEND_INTERVAL_MS;
         drain(context);
-      },
-      fail(error) {
-        fail(context, new Error(error && error.errMsg || "上传实时语音数据失败"));
       }
-    });
+    }, "上传实时语音数据失败");
   }, delay));
 }
 
 function sendEnd(context) {
   context.endSent = true;
-  context.socket.send({
-    data: JSON.stringify({ type: "end" }),
-    success() {
-      context.timers.push(setTimeout(() => {
-        if (!context.settled) fail(context, new Error("等待实时语音识别结果超时"));
-      }, FINAL_TIMEOUT_MS));
-    },
-    fail(error) {
-      fail(context, new Error(error && error.errMsg || "结束实时语音识别失败"));
-    }
-  });
+  sendSocketData(context, JSON.stringify({ type: "end" }), "结束实时语音识别超时", () => {
+    context.timers.push(setTimeout(() => {
+      if (!context.settled) fail(context, new Error("等待实时语音识别结果超时"));
+    }, FINAL_TIMEOUT_MS));
+  }, "结束实时语音识别失败");
+}
+
+function sendSocketData(context, data, timeoutMessage, onSuccess, failureMessage) {
+  if (!context.socket || typeof context.socket.send !== "function") {
+    fail(context, new Error("实时语音识别连接不可用"));
+    return;
+  }
+  let completed = false;
+  const timer = setTimeout(() => {
+    if (completed || context.settled) return;
+    completed = true;
+    fail(context, new Error(timeoutMessage));
+  }, SOCKET_SEND_TIMEOUT_MS);
+  context.timers.push(timer);
+  try {
+    context.socket.send({
+      data,
+      success() {
+        if (completed || context.settled) return;
+        completed = true;
+        clearTimeout(timer);
+        onSuccess();
+      },
+      fail(error) {
+        if (completed || context.settled) return;
+        completed = true;
+        clearTimeout(timer);
+        fail(context, new Error(error && error.errMsg || failureMessage));
+      }
+    });
+  } catch (error) {
+    if (completed || context.settled) return;
+    completed = true;
+    clearTimeout(timer);
+    fail(context, error);
+  }
 }
 
 function takeBytes(context, length) {

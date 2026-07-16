@@ -1,0 +1,97 @@
+<view class="page profile-page">
+  <view class="title">我的社交名片</view>
+  <text class="page-intro">只展示你主动填写的公开资料，不包含真实姓名、联系方式、位置和设备身份。</text>
+
+  <view class="card form-card">
+    <view class="section-title">头像</view>
+    <view class="avatar-editor">
+      <image wx:if="{{profile.avatarType === 'custom'}}" class="current-avatar" src="{{profile.avatarValue}}" mode="aspectFill" />
+      <view wx:else class="current-avatar virtual-avatar" style="background: {{profile.avatarColor}}">{{profile.avatarValue}}</view>
+      <button class="choose-avatar-btn" open-type="chooseAvatar" bindchooseavatar="chooseAvatar">选择微信头像</button>
+    </view>
+    <text class="field-tip">也可以使用虚拟形象</text>
+    <view class="avatar-options">
+      <view
+        wx:for="{{virtualAvatars}}"
+        wx:key="value"
+        class="avatar-option {{profile.avatarType === 'virtual' && profile.avatarValue === item.value ? 'selected' : ''}}"
+        style="background: {{item.color}}"
+        data-index="{{index}}"
+        bindtap="selectVirtualAvatar"
+      >{{item.value}}</view>
+    </view>
+  </view>
+
+  <view class="card form-card">
+    <view class="field-block">
+      <view class="field-header"><text>昵称</text><text>{{profile.nickname.length}}/16</text></view>
+      <input class="text-input" type="nickname" maxlength="16" value="{{profile.nickname}}" placeholder="给自己取一个友好的昵称" bindinput="inputNickname" />
+    </view>
+    <view class="field-block">
+      <view class="field-header"><text>一句话介绍</text><text>{{profile.bio.length}}/60</text></view>
+      <textarea class="bio-input" maxlength="60" value="{{profile.bio}}" placeholder="例如：想认识一起跑步的朋友" bindinput="inputBio" />
+    </view>
+  </view>
+
+  <view class="card form-card">
+    <view class="field-header"><text class="section-title compact-title">兴趣标签</text><text>{{profile.tags.length}}/3</text></view>
+    <text class="field-tip">最多选择 3 个，更方便找到聊得来的伙伴</text>
+    <view class="tag-options">
+      <view
+        wx:for="{{tagOptions}}"
+        wx:key="label"
+        class="tag-option {{item.selected ? 'selected' : ''}}"
+        data-tag="{{item.label}}"
+        bindtap="toggleTag"
+      >{{item.label}}</view>
+    </view>
+    <view class="custom-tag-row">
+      <input class="custom-tag-input" maxlength="8" value="{{customTag}}" placeholder="自定义标签" bindinput="inputCustomTag" bindconfirm="addCustomTag" />
+      <button class="add-tag-btn" bindtap="addCustomTag">添加</button>
+    </view>
+    <view wx:if="{{profile.tags.length}}" class="selected-tags">
+      <view wx:for="{{profile.tags}}" wx:key="*this" class="selected-tag" data-tag="{{item}}" bindtap="toggleTag">{{item}} ×</view>
+    </view>
+  </view>
+
+  <view class="card form-card">
+    <view class="section-title">当前社交意愿</view>
+    <view
+      wx:for="{{intentions}}"
+      wx:key="value"
+      class="intention-option {{profile.intention === item.value ? 'selected' : ''}}"
+      data-value="{{item.value}}"
+      bindtap="selectIntention"
+    >
+      <view>
+        <text class="intention-label">{{item.label}}</text>
+        <text class="intention-description">{{item.description}}</text>
+      </view>
+      <text class="radio-dot">{{profile.intention === item.value ? '●' : '○'}}</text>
+    </view>
+  </view>
+
+  <button class="primary-btn save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="saveProfile">{{saving ? '正在同步云端' : '保存社交名片'}}</button>
+
+  <view class="preview-title">别人将看到的名片</view>
+  <view class="card profile-preview">
+    <image wx:if="{{profile.avatarType === 'custom'}}" class="preview-avatar" src="{{profile.avatarValue}}" mode="aspectFill" />
+    <view wx:else class="preview-avatar virtual-avatar" style="background: {{profile.avatarColor}}">{{profile.avatarValue}}</view>
+    <view class="preview-main">
+      <view class="preview-name-row">
+        <text class="preview-name">{{profile.nickname || '云团朋友'}}</text>
+        <text class="intention-badge">{{intentionLabel}}</text>
+      </view>
+      <text class="preview-bio">{{profile.bio || '很高兴在云团遇见你'}}</text>
+      <view wx:if="{{profile.tags.length}}" class="preview-tags">
+        <text wx:for="{{profile.tags}}" wx:key="*this">{{item}}</text>
+      </view>
+      <text wx:else class="preview-empty-tags">还没有选择兴趣标签</text>
+      <button
+        class="greeting-btn {{greetingSent ? 'sent' : ''}}"
+        disabled="{{greetingSent || profile.intention === 'quiet'}}"
+        bindtap="sendGreeting"
+      >{{profile.intention === 'quiet' ? '暂不接收招呼' : (greetingSent ? '已打招呼' : '打个招呼')}}</button>
+    </view>
+  </view>
+</view>

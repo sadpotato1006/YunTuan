@@ -6,6 +6,7 @@ const startedAt = Date.now();
 let battery = 78;
 let chargingState = 1;
 let socialMode = true;
+const socialToken = 0x53494D31;
 
 function createServices() {
   return [
@@ -76,7 +77,7 @@ function readValue(characteristicId) {
   if (same(normalized, UUIDS.modelNumber)) return asciiToBuffer("YT-SIM-01");
   if (same(normalized, UUIDS.firmwareRevision)) return asciiToBuffer("0.2.0");
   if (same(normalized, UUIDS.hardwareRevision)) return asciiToBuffer("SIM-A1");
-  if (same(normalized, UUIDS.protocolInfo)) return new Uint8Array([1, 0, 0x1F, 0, 0, 0]).buffer;
+  if (same(normalized, UUIDS.protocolInfo)) return new Uint8Array([1, 5, 0x1F, 0x07, 0, 0]).buffer;
   throw new Error("这个模拟特征值没有可读取数据");
 }
 
@@ -88,7 +89,7 @@ function createWriteResponse(value) {
 
   if (request.command === config.COMMANDS.HELLO) {
     if (request.payload.length) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
-    data = new Uint8Array([1, 0, 0x1F, 0, 0, 0]);
+    data = new Uint8Array([1, 5, 0x1F, 0x07, 0, 0]);
   } else if (request.command === config.COMMANDS.GET_STATUS) {
     if (request.payload.length) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
     data = createStatusData();
@@ -106,6 +107,12 @@ function createWriteResponse(value) {
   } else if (request.command === config.COMMANDS.PING) {
     if (request.payload.length !== 4) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
     else data = request.payload;
+  } else if (request.command === config.COMMANDS.GET_SOCIAL_TOKEN) {
+    if (request.payload.length) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
+    else {
+      data = new Uint8Array(4);
+      protocol.writeUint32LE(data, 0, socialToken);
+    }
   } else {
     statusCode = config.STATUS_CODES.UNKNOWN_COMMAND;
   }

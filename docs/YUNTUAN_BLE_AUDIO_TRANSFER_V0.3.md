@@ -12,6 +12,8 @@
 
 录音采集、BLE 上传和 ASR 三个阶段重叠执行。固件中的录音状态机和传输/ACK 状态机互相独立，等待手机 ACK 不会暂停麦克风采集。
 
+可靠性约束：重复且没有推进序号的 ACK 不得重置重试预算；Final ACK 后由主循环发送并重试 END，禁止在 GATT 写回调中重入发送 Indicate；录音采集使用墙钟限制，最长 15 秒；保留态、手机写入、无数据和完整会话均必须有超时并最终释放。
+
 ## 2. GATT
 
 | 名称 | UUID | 属性 | 方向 |
@@ -50,6 +52,13 @@
 `[0x12][SessionId:2][SampleCount:4][EncodedBytes:4][CRC32:4]`
 
 `EncodedBytes = ceil((SampleCount - 1) / 2)`。CRC32 使用 IEEE 参数，校验范围为完整 ADPCM 数据。
+
+### Capture Stopped `0x13`，3 字节
+
+`[0x13][SessionId:2]`
+
+麦克风采集停止后立即发送；此时 BLE 上传和实时识别可能仍在继续。小程序收到后应将界面从“正在录音”切换为“录音已停止，正在上传并识别”。
+
 
 ### Error `0x7F`
 

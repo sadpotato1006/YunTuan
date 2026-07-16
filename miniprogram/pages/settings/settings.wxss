@@ -1,4 +1,16 @@
 .settings-title { margin: 14rpx 4rpx 32rpx; }
+.social-profile-entry { display: flex; align-items: flex-start; gap: 22rpx; padding: 30rpx; }
+.profile-entry-avatar { width: 94rpx; height: 94rpx; flex: 0 0 94rpx; border-radius: 50%; }
+.virtual-profile-avatar { display: flex; align-items: center; justify-content: center; font-size: 44rpx; }
+.profile-entry-content { flex: 1; min-width: 0; }
+.profile-entry-name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12rpx; }
+.profile-entry-name { font-size: 32rpx; font-weight: 650; }
+.profile-entry-intention { padding: 5rpx 12rpx; border-radius: 16rpx; background: #e4efe8; color: #52796f; font-size: 21rpx; }
+.profile-entry-bio { display: block; margin-top: 10rpx; color: #687771; font-size: 26rpx; line-height: 1.45; }
+.profile-entry-tags { display: flex; flex-wrap: wrap; gap: 10rpx; margin-top: 12rpx; }
+.profile-entry-tags text { padding: 5rpx 11rpx; border-radius: 16rpx; background: #f4f1e9; color: #756b54; font-size: 21rpx; }
+.profile-edit-hint { display: block; margin-top: 15rpx; color: #52796f; font-size: 24rpx; }
+.social-profile-entry > .arrow { align-self: center; }
 .list-card { padding: 0 32rpx; }
 .setting-item, .link-item { min-height: 126rpx; display: flex; align-items: center; justify-content: space-between; border-bottom: 1rpx solid #edf0ed; }
 .setting-item:last-child, .link-item:last-child { border-bottom: 0; }

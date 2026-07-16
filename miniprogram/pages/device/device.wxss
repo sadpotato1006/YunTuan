@@ -1,6 +1,9 @@
 .device-card { text-align: center; padding: 48rpx 36rpx; }
-.device-mark { width: 120rpx; height: 120rpx; margin: 0 auto 24rpx; border-radius: 50%; background: #dfece5; color: #52796f; display: flex; align-items: center; justify-content: center; font-size: 50rpx; }
-.connection { margin: 18rpx 0 30rpx; color: #999; }
+.device-owner-avatar { width: 132rpx; height: 132rpx; margin: 0 auto 22rpx; border-radius: 50%; }
+.virtual-owner-avatar { display: flex; align-items: center; justify-content: center; font-size: 58rpx; }
+.owner-nickname { word-break: break-all; }
+.device-name { display: block; margin-top: 8rpx; color: #7b8883; font-size: 26rpx; }
+.connection { margin: 14rpx 0 30rpx; color: #999; }
 .connection.connected { color: #5c9968; }
 .battery-wrap { width: 80%; height: 24rpx; margin: auto; background: #e8ece9; border-radius: 20rpx; overflow: hidden; }
 .battery-fill { height: 100%; background: #77a47b; border-radius: 20rpx; }
@@ -17,6 +20,21 @@
 .info-row text:last-child { text-align: right; word-break: break-all; }
 .setting-row { display: flex; justify-content: space-between; align-items: center; }
 .setting-row .section-title { margin-bottom: 8rpx; }
+.encounter-card { display: flex; align-items: flex-start; gap: 20rpx; text-align: left; }
+.encounter-icon { width: 72rpx; height: 72rpx; flex: 0 0 72rpx; border-radius: 50%; background: #fff1cf; color: #9a722b; display: flex; align-items: center; justify-content: center; font-weight: 600; }
+.encounter-avatar { width: 92rpx; height: 92rpx; flex: 0 0 92rpx; border-radius: 50%; }
+.virtual-encounter-avatar { display: flex; align-items: center; justify-content: center; font-size: 42rpx; }
+.encounter-content { flex: 1; min-width: 0; }
+.encounter-content .section-title { margin-bottom: 8rpx; }
+.encounter-name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10rpx; }
+.encounter-name { font-size: 32rpx; font-weight: 600; }
+.encounter-intention { padding: 5rpx 11rpx; border-radius: 15rpx; background: #e4efe8; color: #52796f; font-size: 21rpx; }
+.encounter-bio { display: block; margin-top: 9rpx; color: #60706b; font-size: 26rpx; line-height: 1.5; }
+.encounter-tags { display: flex; flex-wrap: wrap; gap: 9rpx; margin-top: 12rpx; }
+.encounter-tags text { padding: 5rpx 10rpx; border-radius: 15rpx; background: #f4f1e9; color: #756b54; font-size: 21rpx; }
+.encounter-meta { display: block; margin-top: 12rpx; color: #89938f; font-size: 22rpx; }
+.encounter-count-wrap { align-self: flex-start; }
+.encounter-count { color: #52796f; font-size: 26rpx; white-space: nowrap; }
 .scan-actions { display: flex; flex-direction: column; gap: 18rpx; margin-bottom: 34rpx; }
 .scan-btn { width: 100%; margin: 0; }
 .simulator-btn { width: 100%; min-height: 82rpx; margin: 0; border-radius: 20rpx; background: #fff8e8 !important; color: #8b6b2e !important; font-size: 29rpx; }

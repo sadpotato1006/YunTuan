@@ -1,7 +1,9 @@
 <view class="page">
   <view class="device-card card">
-    <view class="device-mark">云</view>
-    <view class="title">{{device.name}}</view>
+    <image wx:if="{{socialProfile.avatarType === 'custom'}}" class="device-owner-avatar" src="{{socialProfile.avatarValue}}" mode="aspectFill" />
+    <view wx:else class="device-owner-avatar virtual-owner-avatar" style="background: {{socialProfile.avatarColor}}">{{socialProfile.avatarValue}}</view>
+    <view class="title owner-nickname">{{socialProfile.nickname}}</view>
+    <text class="device-name">{{device.name}}</text>
     <view class="connection {{device.ready ? 'connected' : ''}}">
       ● {{device.ready ? '设备已就绪' : (device.connected ? '正在初始化协议' : statusText)}}
     </view>
@@ -41,7 +43,7 @@
     <view wx:for="{{nearbyDevices}}" wx:key="deviceId" class="nearby-device card">
       <view class="nearby-info">
         <text class="nearby-name">{{item.name}}</text>
-        <text class="nearby-id">{{item.deviceId}}</text>
+        <text class="nearby-id">设备ID：{{item.name}}</text>
         <text class="nearby-rssi">信号 {{item.RSSI}} dBm</text>
       </view>
       <button
@@ -64,6 +66,34 @@
     <view class="card setting-row">
       <view><view class="section-title">社交模式</view><text class="muted">状态以挂件返回的结果为准</text></view>
       <switch checked="{{device.socialMode}}" disabled="{{operating}}" color="#52796F" bindchange="toggleSocialMode" />
+    </view>
+    <view wx:if="{{device.lastEncounterAt}}" class="card encounter-card">
+      <block wx:if="{{device.lastEncounterProfile}}">
+        <image wx:if="{{device.lastEncounterProfile.avatarType === 'custom'}}" class="encounter-avatar" src="{{device.lastEncounterProfile.avatarValue}}" mode="aspectFill" />
+        <view wx:else class="encounter-avatar virtual-encounter-avatar" style="background: {{device.lastEncounterProfile.avatarColor}}">{{device.lastEncounterProfile.avatarValue}}</view>
+        <view class="encounter-content">
+          <view class="encounter-name-row">
+            <text class="encounter-name">{{device.lastEncounterProfile.nickname}}</text>
+            <text class="encounter-intention">{{device.lastEncounterProfile.intentionLabel}}</text>
+          </view>
+          <text class="encounter-bio">{{device.lastEncounterProfile.bio}}</text>
+          <view wx:if="{{device.lastEncounterProfile.tags.length}}" class="encounter-tags">
+            <text wx:for="{{device.lastEncounterProfile.tags}}" wx:key="*this">{{item}}</text>
+          </view>
+          <text class="encounter-meta">{{device.lastEncounterText}} · 信号 {{device.lastEncounterRssi}} dBm</text>
+        </view>
+      </block>
+      <block wx:else>
+        <view class="encounter-icon">遇</view>
+        <view class="encounter-content">
+          <view class="section-title">遇到云团伙伴</view>
+          <text class="muted">{{device.encounterProfileLoading ? '正在获取对方的公开名片…' : device.encounterProfileMessage}}</text>
+          <text class="encounter-meta">{{device.lastEncounterText}} · 信号 {{device.lastEncounterRssi}} dBm</text>
+        </view>
+      </block>
+      <view class="encounter-count-wrap">
+        <text class="encounter-count">{{device.encounterCount}} 次</text>
+      </view>
     </view>
     <view class="device-actions">
       <button class="secondary-btn" disabled="{{operating}}" bindtap="findDevice">提醒查找挂件</button>

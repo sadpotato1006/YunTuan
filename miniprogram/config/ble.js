@@ -27,10 +27,12 @@ const COMMANDS = {
   FIND_DEVICE: 0x04,
   SET_TIME: 0x05,
   PING: 0x06,
+  GET_SOCIAL_TOKEN: 0x07,
   STATUS_CHANGED: 0x20,
   BUTTON_EVENT: 0x21,
   LOW_BATTERY: 0x22,
-  BIND_WINDOW_CHANGED: 0x23
+  BIND_WINDOW_CHANGED: 0x23,
+  SOCIAL_ENCOUNTER: 0x24
 };
 
 const STATUS_CODES = {
@@ -57,7 +59,7 @@ module.exports = {
   sof: 0xA5,
   protocolVersion: 0x01,
   protocolMajor: 0x01,
-  protocolMinor: 0x03,
+  protocolMinor: 0x05,
   flags: {
     request: 0x00,
     response: 0x01,
@@ -74,7 +76,8 @@ module.exports = {
     sessionAuth: 1 << 6,
     ota: 1 << 7,
     audioUpload: 1 << 8,
-    audioPlayback: 1 << 9
+    audioPlayback: 1 << 9,
+    socialEncounter: 1 << 10
   },
   UUIDS,
   COMMANDS,

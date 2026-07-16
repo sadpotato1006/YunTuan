@@ -2,6 +2,7 @@ const assert = require("assert");
 const Module = require("module");
 
 const sentFrames = [];
+let failNextBinarySend = false;
 const originalLoad = Module._load;
 Module._load = function load(request, parent, isMain) {
   if (request === "./chat" && parent && /yuntuan-realtime-asr\.js$/.test(parent.filename)) {
@@ -23,6 +24,11 @@ global.wx = {
       onClose(listener) { handlers.close = listener; },
       send(options) {
         if (options.data instanceof ArrayBuffer) {
+          if (failNextBinarySend) {
+            failNextBinarySend = false;
+            options.fail({ errMsg: "simulated socket send failure" });
+            return;
+          }
           sentFrames.push(new Uint8Array(options.data));
           options.success();
           return;
@@ -68,6 +74,12 @@ Module._load = originalLoad;
   assert.strictEqual(sentFrames[0][1], 0x12);
   assert.strictEqual(sentFrames[0][2], 0xFE);
   assert.strictEqual(sentFrames[0][3], 0xFF);
+
+  failNextBinarySend = true;
+  const failedResult = realtimeAsr.start(8);
+  realtimeAsr.pushPcm(8, samples);
+  realtimeAsr.finish(8).catch(() => {});
+  await assert.rejects(failedResult, /simulated socket send failure/);
   console.log("realtime_asr_test: ok");
 })().catch(error => {
   console.error(error);

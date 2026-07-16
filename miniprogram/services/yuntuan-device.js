@@ -1,6 +1,7 @@
 const bleService = require("./ble");
 const audioService = require("./yuntuan-audio");
 const ttsService = require("./yuntuan-tts");
+const socialService = require("./social");
 const config = require("../config/ble");
 const protocol = require("../utils/yuntuan-protocol");
 const bufferUtils = require("../utils/buffer");
@@ -35,7 +36,15 @@ const initialState = {
   serialNumber: "",
   statusText: "设备未连接",
   errorMessage: "",
-  lastEventText: ""
+  lastEventText: "",
+  lastEncounterAt: 0,
+  lastEncounterText: "",
+  lastEncounterRssi: null,
+  encounterCount: 0,
+  ownSocialToken: 0,
+  lastEncounterProfile: null,
+  encounterProfileLoading: false,
+  encounterProfileMessage: ""
 };
 
 let state = Object.assign({}, initialState);
@@ -51,6 +60,7 @@ let startupReconnectAttempted = false;
 let reconnectIndex = 0;
 let reconnectTimer = null;
 let wasConnected = false;
+let encounterResolveVersion = 0;
 
 bleService.subscribe(handleTransportState);
 bleService.subscribeValues(handleValue);
@@ -161,7 +171,47 @@ function applyEvent(event) {
   }
   if (event.type === "bindWindowChanged") {
     setState({ bindState: event.bindState, lastEventText: "设备绑定状态已变化" });
+    return;
   }
+  if (event.type === "socialEncounter") {
+    const encounteredAt = Date.now() - event.ageSeconds * 1000;
+    const resolveVersion = ++encounterResolveVersion;
+    setState({
+      lastEncounterAt: encounteredAt,
+      lastEncounterText: formatEncounterTime(encounteredAt),
+      lastEncounterRssi: event.rssi,
+      encounterCount: state.encounterCount + 1,
+      lastEventText: "附近遇到了一位云团伙伴",
+      lastEncounterProfile: null,
+      encounterProfileLoading: true,
+      encounterProfileMessage: "正在获取对方的公开名片…"
+    });
+    if (typeof wx !== "undefined" && typeof wx.showToast === "function") {
+      wx.showToast({ title: "遇到云团伙伴啦", icon: "none", duration: 2200 });
+    }
+    socialService.resolveToken(event.peerToken)
+      .then(profile => {
+        if (resolveVersion !== encounterResolveVersion) return;
+        setState({
+          lastEncounterProfile: profile,
+          encounterProfileLoading: false,
+          encounterProfileMessage: profile ? "" : "对方暂未公开社交名片"
+        });
+      })
+      .catch(error => {
+        if (resolveVersion !== encounterResolveVersion) return;
+        setState({
+          encounterProfileLoading: false,
+          encounterProfileMessage: error.message || "对方名片暂时无法获取"
+        });
+      });
+  }
+}
+
+function formatEncounterTime(timestamp) {
+  const date = new Date(timestamp);
+  const pad = value => String(value).padStart(2, "0");
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 async function initialize() {
@@ -258,7 +308,21 @@ async function initializeConnectedDevice() {
   setState(hello);
 
   await getStatus();
+  if (protocol.hasCapability(info.capabilities, config.capabilities.socialEncounter)) {
+    const tokenResponse = await request(config.COMMANDS.GET_SOCIAL_TOKEN);
+    if (tokenResponse.data.length !== 4) throw new Error("挂件匿名令牌长度不正确");
+    setState({ ownSocialToken: protocol.readUint32LE(tokenResponse.data, 0) });
+  }
   setState({ connecting: false, connected: true, ready: true, statusText: "设备已就绪", errorMessage: "" });
+  refreshSocialRegistration().catch(error => {
+    console.warn("社交匿名令牌登记失败：", error && error.message);
+  });
+}
+
+async function refreshSocialRegistration() {
+  if (!state.connected || !state.ownSocialToken) return { registered: false };
+  const result = await socialService.registerToken(state.ownSocialToken);
+  return Object.assign({ registered: true }, result);
 }
 
 async function readStandardDeviceInformation(services) {
@@ -624,7 +688,14 @@ function toDevice() {
     serialNumber: state.serialNumber,
     statusText: state.statusText,
     errorMessage: state.errorMessage,
-    lastEventText: state.lastEventText
+    lastEventText: state.lastEventText,
+    lastEncounterAt: state.lastEncounterAt,
+    lastEncounterText: state.lastEncounterText,
+    lastEncounterRssi: state.lastEncounterRssi,
+    encounterCount: state.encounterCount,
+    lastEncounterProfile: state.lastEncounterProfile,
+    encounterProfileLoading: state.encounterProfileLoading,
+    encounterProfileMessage: state.encounterProfileMessage
   };
 }
 
@@ -664,6 +735,7 @@ module.exports = {
   findDevice,
   setTime,
   ping,
+  refreshSocialRegistration,
   getState,
   subscribe
 };

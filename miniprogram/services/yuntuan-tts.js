@@ -15,6 +15,7 @@ const STATUS_COMPLETE = 0x13;
 const STATUS_ERROR = 0x7F;
 const ACK_WINDOW = 8;
 const MAX_SECONDS = 60;
+const BLE_WRITE_TIMEOUT_MS = 3000;
 
 const initialState = {
   supported: false,
@@ -284,17 +285,47 @@ function createSessionControl(command, sessionId) {
 }
 
 function sendControl(packet) {
-  return bleService.writeBuffer(config.UUIDS.ttsService, config.UUIDS.ttsControl, packet, "write");
+  return withTimeout(
+    bleService.writeBuffer(config.UUIDS.ttsService, config.UUIDS.ttsControl, packet, "write"),
+    BLE_WRITE_TIMEOUT_MS,
+    "向挂件发送朗读控制指令超时"
+  );
 }
 
 function sendData(packet) {
-  return bleService.writeBuffer(
-    config.UUIDS.ttsService,
-    config.UUIDS.ttsData,
-    packet,
-    "writeNoResponse",
-    { quiet: true }
+  return withTimeout(
+    bleService.writeBuffer(
+      config.UUIDS.ttsService,
+      config.UUIDS.ttsData,
+      packet,
+      "writeNoResponse",
+      { quiet: true }
+    ),
+    BLE_WRITE_TIMEOUT_MS,
+    "向挂件发送朗读音频超时"
   );
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(message));
+    }, timeoutMs);
+    Promise.resolve(promise).then(value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }, error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
 }
 
 function waitForStatus(predicate, timeout, message) {

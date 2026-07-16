@@ -8,6 +8,7 @@ const AUDIO_CODEC_IMA_ADPCM = 1;
 const STATUS_META = 0x11;
 const STATUS_RECORDING = 0x10;
 const STATUS_END = 0x12;
+const STATUS_CAPTURE_STOPPED = 0x13;
 const STATUS_ERROR = 0x7F;
 const DATA_PACKET = 0x20;
 const CONTROL_ACK = 0x01;
@@ -16,6 +17,10 @@ const CONTROL_ABORT = 0x03;
 const ACK_WINDOW = 8;
 const MAX_RECORD_SECONDS = 15;
 const MAX_ENCODED_BYTES = 16000 * MAX_RECORD_SECONDS / 2;
+const AUDIO_INACTIVITY_TIMEOUT_MS = 6000;
+const AUDIO_SESSION_TIMEOUT_MS = 30000;
+const AUDIO_CONTROL_WRITE_TIMEOUT_MS = 1500;
+const ACK_REPEAT_SUPPRESS_MS = 400;
 
 const initialState = {
   supported: false,
@@ -37,6 +42,10 @@ let session = null;
 let controlQueue = Promise.resolve();
 let finishing = false;
 let recordingStartedAt = 0;
+let audioActivityTimer = null;
+let audioSessionTimer = null;
+let pendingAck = null;
+let ackPumpRunning = false;
 
 bleService.subscribe(handleTransportState);
 bleService.subscribeValues(handleValue);
@@ -75,8 +84,10 @@ function subscribeCompleted(listener) {
 
 function handleTransportState(transport) {
   if (transport.connected) return;
+  clearAudioTimers();
   const wasActive = session || state.phase === "recording" || state.phase === "receiving";
   if (session) realtimeAsr.cancel(session.id, "BLE 连接已断开");
+  pendingAck = null;
   session = null;
   finishing = false;
   setState({
@@ -94,6 +105,7 @@ async function attach(services) {
     findCharacteristic(services, config.UUIDS.audioService, characteristicId)
   );
   if (!available) {
+    clearAudioTimers();
     session = null;
     setState(Object.assign({}, initialState, {
       statusText: "当前挂件固件不支持语音传输"
@@ -145,6 +157,9 @@ function handleStatus(bytes) {
     const sessionId = readUint16(bytes, 1);
     if (session) realtimeAsr.cancel(session.id, "新的硬件录音已经开始");
     recordingStartedAt = Date.now();
+    startAudioSessionTimer();
+    touchAudioActivity();
+    pendingAck = null;
     session = null;
     finishing = false;
     setState({
@@ -163,14 +178,36 @@ function handleStatus(bytes) {
     return;
   }
 
+  if (bytes[0] === STATUS_CAPTURE_STOPPED) {
+    if (bytes.length !== 3) throw new Error("挂件停止录音状态长度错误");
+    const sessionId = readUint16(bytes, 1);
+    if (state.sessionId && state.sessionId !== sessionId) {
+      console.warn("忽略旧挂件停止录音状态：", sessionId);
+      return;
+    }
+    touchAudioActivity();
+    if (session && session.id === sessionId) session.captureStopped = true;
+    setState({
+      phase: "receiving",
+      sessionId,
+      statusText: "录音已停止，正在上传并识别…",
+      errorMessage: ""
+    });
+    return;
+  }
+
   if (bytes[0] === STATUS_END) {
     if (bytes.length !== 15) throw new Error("挂件录音结束状态长度错误");
     const sessionId = readUint16(bytes, 1);
     const sampleCount = readUint32(bytes, 3);
     const encodedBytes = readUint32(bytes, 7);
     const expectedCrc = readUint32(bytes, 11);
-    if (!session || session.id !== sessionId) throw new Error("挂件录音会话不匹配");
+    if (!session || session.id !== sessionId) {
+      console.warn("忽略旧挂件录音结束状态：", sessionId);
+      return;
+    }
     if (!finishing) {
+      clearAudioTimers();
       finishing = true;
       finishSession(sampleCount, encodedBytes, expectedCrc).catch(failSession);
     }
@@ -178,7 +215,14 @@ function handleStatus(bytes) {
   }
 
   if (bytes[0] === STATUS_ERROR) {
-    if (bytes.length < 4) throw new Error("挂件语音错误状态长度错误");
+    if (bytes.length !== 4) throw new Error("挂件语音错误状态长度错误");
+    const sessionId = readUint16(bytes, 1);
+    const activeSessionId = session ? session.id : state.sessionId;
+    const active = state.phase === "recording" || state.phase === "receiving";
+    if (!active || (activeSessionId && activeSessionId !== sessionId)) {
+      console.warn("忽略旧挂件语音错误状态：", sessionId);
+      return;
+    }
     const errorCode = bytes[3];
     if (session) realtimeAsr.cancel(session.id, getDeviceErrorMessage(errorCode));
     throw new Error(getDeviceErrorMessage(errorCode));
@@ -211,6 +255,9 @@ function beginSession(bytes) {
 
   if (session) realtimeAsr.cancel(session.id, "硬件重新开始发送录音流");
   const transferStartedAt = Date.now();
+  startAudioSessionTimer();
+  touchAudioActivity();
+  pendingAck = null;
   session = {
     id,
     sampleRate,
@@ -221,10 +268,13 @@ function beginSession(bytes) {
     receivedBytes: 0,
     parts: [],
     finalPacketSeen: false,
+    captureStopped: false,
     streamDecoder: codec.createImaAdpcmStreamDecoder(initialPredictor, initialIndex),
     realtimeTranscriptPromise: realtimeAsr.start(id),
     recordingStartedAt: recordingStartedAt || transferStartedAt,
-    transferStartedAt
+    transferStartedAt,
+    lastAckRequested: -1,
+    lastAckRequestedAt: 0
   };
   finishing = false;
   setState({
@@ -245,6 +295,7 @@ function handleData(bytes) {
   const sequence = readUint16(bytes, 3);
   const flags = bytes[5];
   if (sessionId !== session.id) return;
+  touchAudioActivity();
   if (flags & ~0x01) throw new Error("挂件录音分片标志不正确");
   const isFinalPacket = Boolean(flags & 0x01);
   const payload = bytes.slice(6);
@@ -256,7 +307,12 @@ function handleData(bytes) {
     session.receivedBytes += payload.length;
     session.expectedSequence += 1;
     if (session.receivedBytes > MAX_ENCODED_BYTES) throw new Error("挂件录音超过最长时限");
-    if (isFinalPacket) session.finalPacketSeen = true;
+    if (isFinalPacket) {
+      session.finalPacketSeen = true;
+      // Final is authoritative evidence that microphone capture has ended,
+      // even if the separate CAPTURE_STOPPED indication was lost.
+      session.captureStopped = true;
+    }
 
     const pcm = session.streamDecoder.push(payload);
     if (pcm.length) realtimeAsr.pushPcm(session.id, pcm);
@@ -268,7 +324,13 @@ function handleData(bytes) {
     if (shouldAck || session.expectedSequence === 1) {
       const durationMs = Math.round((1 + session.receivedBytes * 2) * 1000 / session.sampleRate);
       const progress = Math.min(99, Math.floor(durationMs * 100 / (MAX_RECORD_SECONDS * 1000)));
-      setState({ progress, durationMs, statusText: "正在录音、上传并实时识别…" });
+      setState({
+        progress,
+        durationMs,
+        statusText: session.captureStopped
+          ? "录音已停止，正在上传并识别…"
+          : "正在录音、上传并实时识别…"
+      });
     }
     return;
   }
@@ -278,6 +340,7 @@ function handleData(bytes) {
 }
 
 async function finishSession(sampleCount, encodedBytes, expectedCrc) {
+  clearAudioTimers();
   const current = session;
   const recordingFinishedAt = Date.now();
   if (!current) throw new Error("没有可完成的挂件录音会话");
@@ -369,11 +432,44 @@ async function finishSession(sampleCount, encodedBytes, expectedCrc) {
 }
 
 function sendAck(sessionId, nextSequence) {
-  const packet = new Uint8Array(5);
-  packet[0] = CONTROL_ACK;
-  writeUint16(packet, 1, sessionId);
-  writeUint16(packet, 3, nextSequence);
-  sendControl(packet).catch(failSession);
+  if (!session || session.id !== sessionId) return;
+  const now = Date.now();
+  if (session.lastAckRequested === nextSequence &&
+      now - session.lastAckRequestedAt < ACK_REPEAT_SUPPRESS_MS) {
+    return;
+  }
+  session.lastAckRequested = nextSequence;
+  session.lastAckRequestedAt = now;
+  if (!pendingAck || pendingAck.sessionId !== sessionId ||
+      nextSequence >= pendingAck.nextSequence) {
+    pendingAck = { sessionId, nextSequence };
+  }
+  drainAckQueue();
+}
+
+async function drainAckQueue() {
+  if (ackPumpRunning) return;
+  ackPumpRunning = true;
+  try {
+    while (pendingAck) {
+      const ack = pendingAck;
+      pendingAck = null;
+      if (!session || session.id !== ack.sessionId) continue;
+      const packet = new Uint8Array(5);
+      packet[0] = CONTROL_ACK;
+      writeUint16(packet, 1, ack.sessionId);
+      writeUint16(packet, 3, ack.nextSequence);
+      try {
+        await sendControl(packet);
+      } catch (error) {
+        if (session && session.id === ack.sessionId) failSession(error);
+        break;
+      }
+    }
+  } finally {
+    ackPumpRunning = false;
+    if (pendingAck) drainAckQueue();
+  }
 }
 
 function createSessionControl(command, sessionId) {
@@ -384,25 +480,91 @@ function createSessionControl(command, sessionId) {
 }
 
 function sendControl(packet) {
-  controlQueue = controlQueue.catch(() => {}).then(() => bleService.writeBuffer(
-    config.UUIDS.audioService,
-    config.UUIDS.audioControl,
-    packet,
-    "write"
+  controlQueue = controlQueue.catch(() => {}).then(() => withTimeout(
+    bleService.writeBuffer(
+      config.UUIDS.audioService,
+      config.UUIDS.audioControl,
+      packet,
+      "write"
+    ),
+    AUDIO_CONTROL_WRITE_TIMEOUT_MS,
+    "挂件语音确认写入超时"
   ));
   return controlQueue;
 }
 
 function failSession(error) {
+  clearAudioTimers();
   const message = error && error.message ? error.message : "挂件录音传输失败";
-  const sessionId = session && session.id;
-  if (sessionId) realtimeAsr.cancel(sessionId, message);
+  const activeSession = session;
+  const sessionId = activeSession && activeSession.id
+    ? activeSession.id
+    : ((state.phase === "recording" || state.phase === "receiving") ? state.sessionId : 0);
+  if (activeSession && activeSession.id) realtimeAsr.cancel(activeSession.id, message);
+  pendingAck = null;
   session = null;
   finishing = false;
   if (sessionId && bleService.getState().connected) {
     sendControl(createSessionControl(CONTROL_ABORT, sessionId)).catch(() => {});
   }
   setState({ phase: "error", progress: 0, statusText: "挂件录音处理失败", errorMessage: message });
+}
+
+function clearAudioActivityTimer() {
+  if (!audioActivityTimer) return;
+  clearTimeout(audioActivityTimer);
+  audioActivityTimer = null;
+}
+
+function clearAudioSessionTimer() {
+  if (!audioSessionTimer) return;
+  clearTimeout(audioSessionTimer);
+  audioSessionTimer = null;
+}
+
+function clearAudioTimers() {
+  clearAudioActivityTimer();
+  clearAudioSessionTimer();
+}
+
+function startAudioSessionTimer() {
+  clearAudioSessionTimer();
+  audioSessionTimer = setTimeout(() => {
+    audioSessionTimer = null;
+    if (state.phase !== "recording" && state.phase !== "receiving") return;
+    failSession(new Error("挂件语音会话超过 30 秒未完成，已自动重置"));
+  }, AUDIO_SESSION_TIMEOUT_MS);
+}
+
+function touchAudioActivity() {
+  clearAudioActivityTimer();
+  audioActivityTimer = setTimeout(() => {
+    audioActivityTimer = null;
+    if (state.phase !== "recording" && state.phase !== "receiving") return;
+    failSession(new Error("挂件语音传输超过 6 秒没有新数据，已自动重置"));
+  }, AUDIO_INACTIVITY_TIMEOUT_MS);
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(message));
+    }, timeoutMs);
+    Promise.resolve(promise).then(value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }, error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
 }
 
 function getDeviceErrorMessage(code) {
@@ -434,6 +596,7 @@ function removeFile(filePath) {
 
 function markReady() {
   if (!state.attached || (state.phase !== "complete" && state.phase !== "error")) return;
+  clearAudioTimers();
   setState({
     phase: "idle",
     progress: 0,

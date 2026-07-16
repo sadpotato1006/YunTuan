@@ -241,6 +241,16 @@ function parseEvent(frameOrValue) {
     if (bytes.length !== 1 || bytes[0] > 2) throw new Error("BIND_WINDOW_CHANGED 状态非法");
     return { type: "bindWindowChanged", command: frame.command, bindState: bytes[0] };
   }
+  if (frame.command === config.COMMANDS.SOCIAL_ENCOUNTER) {
+    if (bytes.length !== 9) throw new Error("SOCIAL_ENCOUNTER 必须为 9 字节");
+    return {
+      type: "socialEncounter",
+      command: frame.command,
+      peerToken: readUint32LE(bytes, 0),
+      rssi: bytes[4] > 127 ? bytes[4] - 256 : bytes[4],
+      ageSeconds: readUint32LE(bytes, 5)
+    };
+  }
   return { type: "unknown", command: frame.command, payload: bytes };
 }
 

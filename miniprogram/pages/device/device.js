@@ -1,4 +1,5 @@
 const deviceService = require("../../services/device");
+const profileService = require("../../services/social-profile");
 Page({
   data: {
     loading: true,
@@ -8,12 +9,17 @@ Page({
     available: false,
     statusText: "正在初始化蓝牙…",
     nearbyDevices: [],
+    socialProfile: profileService.toPublicCard(profileService.getProfile()),
     device: {
       name: "云团智能挂件",
       connected: false,
       ready: false,
       battery: null,
-      socialMode: false
+      socialMode: false,
+      lastEncounterAt: 0,
+      lastEncounterText: "",
+      lastEncounterRssi: null,
+      encounterCount: 0
     }
   },
 
@@ -45,13 +51,21 @@ Page({
           hardwareRevision: state.hardwareRevision,
           serialNumber: state.serialNumber,
           errorMessage: state.errorMessage,
-          lastEventText: state.lastEventText
+          lastEventText: state.lastEventText,
+          lastEncounterAt: state.lastEncounterAt,
+          lastEncounterText: state.lastEncounterText,
+          lastEncounterRssi: state.lastEncounterRssi,
+          encounterCount: state.encounterCount,
+          lastEncounterProfile: state.lastEncounterProfile,
+          encounterProfileLoading: state.encounterProfileLoading,
+          encounterProfileMessage: state.encounterProfileMessage
         })
       });
     });
   },
 
   async onShow() {
+    this.setData({ socialProfile: profileService.toPublicCard(profileService.getProfile()) });
     await this.initializeDevice();
     await this.loadDevice();
   },

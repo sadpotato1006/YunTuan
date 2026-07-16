@@ -1,0 +1,47 @@
+.profile-page { padding-bottom: 80rpx; }
+.page-intro { display: block; margin: 12rpx 0 28rpx; color: #71807b; font-size: 27rpx; line-height: 1.65; }
+.form-card { padding: 30rpx; }
+.avatar-editor { display: flex; align-items: center; gap: 24rpx; }
+.current-avatar, .preview-avatar { width: 128rpx; height: 128rpx; flex: 0 0 128rpx; border-radius: 50%; }
+.virtual-avatar { display: flex; align-items: center; justify-content: center; font-size: 58rpx; }
+.choose-avatar-btn { flex: 1; min-height: 78rpx; margin: 0; border-radius: 18rpx; background: #e7efe9 !important; color: #365f55 !important; font-size: 29rpx; }
+.choose-avatar-btn::after, .add-tag-btn::after, .greeting-btn::after { border: 0; }
+.field-tip { display: block; margin: 18rpx 0 14rpx; color: #83908b; font-size: 25rpx; }
+.avatar-options { display: flex; flex-wrap: wrap; gap: 16rpx; }
+.avatar-option { width: 72rpx; height: 72rpx; border: 4rpx solid transparent; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 36rpx; box-sizing: border-box; }
+.avatar-option.selected { border-color: #52796f; transform: scale(1.06); }
+.field-block + .field-block { margin-top: 30rpx; }
+.field-header { display: flex; align-items: center; justify-content: space-between; color: #2f3e3a; }
+.field-header > text:last-child { color: #94a09c; font-size: 24rpx; }
+.text-input, .bio-input, .custom-tag-input { box-sizing: border-box; background: #f5f7f5; border: 1rpx solid #e3e9e5; border-radius: 16rpx; font-size: 29rpx; }
+.text-input { height: 84rpx; margin-top: 14rpx; padding: 0 22rpx; }
+.bio-input { width: 100%; height: 168rpx; margin-top: 14rpx; padding: 20rpx 22rpx; line-height: 1.5; }
+.compact-title { margin-bottom: 0; }
+.tag-options, .selected-tags, .preview-tags { display: flex; flex-wrap: wrap; gap: 14rpx; }
+.tag-option { padding: 13rpx 22rpx; border-radius: 28rpx; background: #f0f3f1; color: #65736e; font-size: 27rpx; }
+.tag-option.selected { background: #dcebe2; color: #365f55; font-weight: 600; }
+.custom-tag-row { display: flex; gap: 14rpx; margin-top: 20rpx; }
+.custom-tag-input { flex: 1; height: 76rpx; padding: 0 20rpx; }
+.add-tag-btn { width: 126rpx; min-height: 76rpx; margin: 0; border-radius: 16rpx; background: #e7efe9 !important; color: #365f55 !important; font-size: 27rpx; }
+.selected-tags { margin-top: 18rpx; }
+.selected-tag { padding: 10rpx 16rpx; border-radius: 24rpx; background: #fff4dc; color: #856628; font-size: 25rpx; }
+.intention-option { display: flex; align-items: center; justify-content: space-between; min-height: 100rpx; padding: 16rpx 20rpx; border: 2rpx solid #edf0ee; border-radius: 18rpx; margin-top: 14rpx; }
+.intention-option.selected { border-color: #78a08f; background: #f1f7f3; }
+.intention-label, .intention-description { display: block; }
+.intention-label { font-size: 29rpx; font-weight: 600; }
+.intention-description { margin-top: 7rpx; color: #7b8883; font-size: 24rpx; }
+.radio-dot { color: #52796f; font-size: 34rpx; }
+.save-btn { width: 100%; margin: 6rpx 0 38rpx; }
+.preview-title { margin: 0 4rpx 18rpx; font-size: 30rpx; font-weight: 600; color: #56645f; }
+.profile-preview { display: flex; align-items: flex-start; gap: 24rpx; }
+.preview-avatar { width: 112rpx; height: 112rpx; flex-basis: 112rpx; font-size: 50rpx; }
+.preview-main { flex: 1; min-width: 0; }
+.preview-name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12rpx; }
+.preview-name { font-size: 34rpx; font-weight: 700; }
+.intention-badge { padding: 6rpx 13rpx; border-radius: 18rpx; background: #e4efe8; color: #52796f; font-size: 22rpx; }
+.preview-bio { display: block; margin-top: 13rpx; color: #60706b; font-size: 27rpx; line-height: 1.55; }
+.preview-tags { margin-top: 16rpx; }
+.preview-tags text { padding: 7rpx 13rpx; border-radius: 18rpx; background: #f4f1e9; color: #756b54; font-size: 23rpx; }
+.preview-empty-tags { display: block; margin-top: 14rpx; color: #9aa39f; font-size: 24rpx; }
+.greeting-btn { min-height: 72rpx; margin: 22rpx 0 0; border-radius: 18rpx; background: #52796f !important; color: #fff !important; font-size: 28rpx; }
+.greeting-btn.sent, .greeting-btn[disabled] { background: #dfe6e2 !important; color: #77847f !important; }

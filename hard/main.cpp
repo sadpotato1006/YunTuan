@@ -4,8 +4,10 @@
 // =============================================================================
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <Preferences.h>
 #include <driver/i2s.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 
 // =============================================================================
 // 1. UUID 定义
@@ -13,7 +15,7 @@
 #define DEVICE_SN                 "YT01260000000001"
 #define DEVICE_NAME               "YT-000001"
 #define MODEL_NUMBER              "YT-P01"
-#define FIRMWARE_REVISION         "0.4.1"
+#define FIRMWARE_REVISION         "0.5.6"
 #define HARDWARE_REVISION         "A1"
 
 #define BATTERY_SERVICE_UUID      "0000180F-0000-1000-8000-00805F9B34FB"
@@ -63,12 +65,14 @@
 #define CMD_FIND_DEVICE           0x04
 #define CMD_SET_TIME              0x05
 #define CMD_PING                  0x06
+#define CMD_GET_SOCIAL_TOKEN      0x07
 
 // Event commands (§10)
 #define EVT_STATUS_CHANGED        0x20
 #define EVT_BUTTON_EVENT          0x21
 #define EVT_LOW_BATTERY           0x22
 #define EVT_BIND_WINDOW_CHANGED   0x23
+#define EVT_SOCIAL_ENCOUNTER      0x24
 
 // Status codes (§8)
 #define STATUS_OK                 0x0000
@@ -85,8 +89,8 @@
 
 // Protocol Info (§5.4)
 #define PROTOCOL_MAJOR            1
-#define PROTOCOL_MINOR            3
-#define CAPABILITIES              0x031F        // Control v1.3 + AudioUpload v2 + AudioPlayback v2
+#define PROTOCOL_MINOR            5
+#define CAPABILITIES              0x071F        // Control v1.5 + Audio + anonymous social lookup
 #define SECURITY_MODE             0             // 实验室模式
 
 // Capability bits (§5.4)
@@ -100,6 +104,7 @@
 #define CAP_OTA                   7
 #define CAP_AUDIO_UPLOAD          8
 #define CAP_AUDIO_PLAYBACK        9
+#define CAP_SOCIAL_ENCOUNTER      10
 
 // Button types (§10)
 #define BTN_CLICK                 1
@@ -120,7 +125,7 @@
 #define PIN_SPEAKER_DIN           8             // MAX98357A DIN；BCLK/WS 与麦克风共用
 
 // =============================================================================
-// 3.1 挂件录音与 BLE Audio Transfer v1
+// 3.1 挂件录音与 BLE Audio Transfer v2
 // =============================================================================
 #define AUDIO_SAMPLE_RATE         16000
 #define AUDIO_FRAME_SAMPLES       320           // 20 ms
@@ -129,17 +134,20 @@
 #define AUDIO_MAX_SAMPLES         (AUDIO_SAMPLE_RATE * AUDIO_MAX_SECONDS)
 #define AUDIO_BUFFER_CAPACITY     (AUDIO_MAX_SAMPLES / 2)
 #define AUDIO_VAD_THRESHOLD       650           // 平均绝对幅度，需按实机噪声微调
-#define AUDIO_SILENCE_FRAMES      40            // 检测到语音后静音 0.8 秒自动结束
-#define AUDIO_NO_SPEECH_FRAMES    250           // 5 秒无有效语音则取消
+#define AUDIO_SILENCE_MS          800UL
+#define AUDIO_NO_SPEECH_MS        5000UL
+#define AUDIO_MAX_DURATION_MS     (AUDIO_MAX_SECONDS * 1000UL)
 #define AUDIO_WINDOW_PACKETS      8
 #define AUDIO_ACK_TIMEOUT_MS      1800
 #define AUDIO_ACK_MAX_RETRIES     4
+#define AUDIO_RETAINED_TIMEOUT_MS 30000UL
 
 #define AUDIO_PROTOCOL_VERSION    2
 #define AUDIO_CODEC_IMA_ADPCM     1
 #define AUDIO_STATUS_RECORDING    0x10
 #define AUDIO_STATUS_META         0x11
 #define AUDIO_STATUS_END          0x12
+#define AUDIO_STATUS_CAPTURE_STOPPED 0x13
 #define AUDIO_STATUS_ERROR        0x7F
 #define AUDIO_DATA_PACKET         0x20
 #define AUDIO_DATA_FLAG_FINAL     0x01
@@ -154,7 +162,7 @@
 #define AUDIO_ERROR_NOT_SUBSCRIBED 5
 
 // =============================================================================
-// 3.2 云团朗读与 BLE Speech Playback v1
+// 3.2 云团朗读与 BLE Speech Playback v2
 // =============================================================================
 #define TTS_SAMPLE_RATE           16000
 #define TTS_MAX_SECONDS           60
@@ -182,6 +190,23 @@
 #define TTS_ERROR_SPEAKER         5
 #define TTS_ERROR_BUSY            6
 #define TTS_ERROR_TIMEOUT         7
+
+// =============================================================================
+// 3.3 Device-to-device social proximity
+// =============================================================================
+#define SOCIAL_BEACON_VERSION             1
+#define SOCIAL_BEACON_FLAG_ENABLED        0x01
+#define SOCIAL_BEACON_LENGTH              8
+#define SOCIAL_PEER_CAPACITY              12
+#define SOCIAL_ENTER_RSSI_DBM             (-65)  // Initial ~2 m value; calibrate with the final enclosure.
+#define SOCIAL_EXIT_RSSI_DBM              (-72)  // Hysteresis prevents repeated edge triggers.
+#define SOCIAL_REQUIRED_SAMPLES           3
+#define SOCIAL_PEER_COOLDOWN_MS            60000UL
+#define SOCIAL_PEER_LOST_MS                5000UL
+#define SOCIAL_SCAN_INTERVAL_MS            300
+#define SOCIAL_SCAN_WINDOW_MS              60
+#define SOCIAL_ALERT_DURATION_MS           500
+#define SOCIAL_EVENT_QUEUE_CAPACITY        4
 
 // =============================================================================
 // 4. CRC16-CCITT-FALSE (§7.4)
@@ -212,6 +237,7 @@ static uint8_t  g_chargingState = 0;           // 0=未充电 1=充电中 2=已�
 static uint32_t g_uptime        = 0;
 static bool     g_connected     = false;
 static uint16_t g_capabilities  = CAPABILITIES;
+static Preferences g_preferences;
 
 // Alert state (FIND_DEVICE)
 static bool     g_alertActive   = false;
@@ -221,6 +247,48 @@ static uint32_t g_lastAlertToggle = 0;
 static uint8_t  g_alertType     = 0;
 static uint32_t g_alertTonePhase = 0;
 
+// Social beacon/scanner state. BLE callbacks only request advertising changes;
+// stop/start is performed by loop() so a connect callback never re-enters GAP.
+static NimBLEAdvertising* g_advertising = nullptr;
+static NimBLEScan* g_socialScan = nullptr;
+static uint32_t g_socialDeviceToken = 0;
+static volatile bool g_advertisingModeDirty = false;
+static volatile bool g_beaconDataDirty = false;
+static volatile bool g_desiredConnectableAdvertising = true;
+static volatile bool g_socialScanRestartRequested = false;
+static uint32_t g_socialScanRetryAt = 0;
+
+struct SocialPeerState {
+    uint32_t token;
+    int16_t filteredRssiQuarterDbm;
+    uint32_t lastSeenAt;
+    uint32_t cooldownUntil;
+    uint8_t nearSamples;
+    uint8_t farSamples;
+    bool inside;
+    bool used;
+};
+
+static SocialPeerState g_socialPeers[SOCIAL_PEER_CAPACITY] = {};
+static volatile bool g_socialAlertPending = false;
+static volatile uint32_t g_socialAlertToken = 0;
+static volatile int8_t g_socialAlertRssi = -127;
+static volatile uint32_t g_socialAlertQueuedAt = 0;
+
+struct SocialEncounterEvent {
+    uint32_t token;
+    uint32_t detectedAt;
+    int8_t rssi;
+};
+
+static SocialEncounterEvent g_socialEventQueue[SOCIAL_EVENT_QUEUE_CAPACITY] = {};
+static uint8_t g_socialEventHead = 0;
+static uint8_t g_socialEventCount = 0;
+static portMUX_TYPE g_socialEventMux = portMUX_INITIALIZER_UNLOCKED;
+
+static void requestInteractionBeaconRefresh();
+static void startFindDeviceAlert(uint8_t alertType, uint16_t duration);
+
 // 上一帧成功响应（用于 GET_STATUS 判断）
 static uint8_t  g_lastStatusPayload[12] = {0};
 static uint8_t  g_lastStatusLen = 0;
@@ -228,6 +296,7 @@ static uint8_t  g_lastStatusLen = 0;
 // GATT handles
 static NimBLECharacteristic* pEventTx = nullptr;
 static NimBLECharacteristic* pBatteryLevel = nullptr;
+static volatile bool g_eventTxSubscribed = false;
 
 // Audio Transfer GATT handles
 static NimBLEServer* pBleServer = nullptr;
@@ -265,9 +334,8 @@ static int32_t g_adpcmIndex = 0;
 static bool g_adpcmHasLowNibble = false;
 static uint8_t g_adpcmLowNibble = 0;
 static bool g_speechDetected = false;
-static uint16_t g_silenceFrames = 0;
-static uint16_t g_noSpeechFrames = 0;
 static uint32_t g_recordStartedAt = 0;
+static uint32_t g_lastSpeechAt = 0;
 static bool g_audioStreamStarted = false;
 static bool g_audioFinalized = false;
 
@@ -280,6 +348,11 @@ static uint8_t g_audioAckRetries = 0;
 static uint32_t g_audioNextSendAt = 0;
 static uint32_t g_audioAckDeadline = 0;
 static uint32_t g_audioCompleteDeadline = 0;
+static uint32_t g_audioRetainedDeadline = 0;
+static bool g_audioErrorPending = false;
+static uint16_t g_audioErrorSession = 0;
+static uint8_t g_audioPendingErrorCode = 0;
+static uint32_t g_audioErrorRetryAt = 0;
 
 // Speech Playback GATT 与接收/播放状态
 static NimBLECharacteristic* pTtsStatus = nullptr;
@@ -403,8 +476,8 @@ static void sendResponse(uint8_t cmd, uint8_t seq,
 }
 
 // 发送主动事件帧
-static void sendEvent(uint8_t evtCmd, const uint8_t* payload, uint8_t payloadLen) {
-    if (!g_connected || !pEventTx || payloadLen > PAYLOAD_MAX) return;
+static bool sendEvent(uint8_t evtCmd, const uint8_t* payload, uint8_t payloadLen) {
+    if (!g_connected || !g_eventTxSubscribed || !pEventTx || payloadLen > PAYLOAD_MAX) return false;
 
     uint8_t frame[FRAME_MAX_LEN];
     uint8_t frameLen = buildFrame(FLAG_EVENT, evtCmd, 0, payload, payloadLen, frame);
@@ -419,6 +492,50 @@ static void sendEvent(uint8_t evtCmd, const uint8_t* payload, uint8_t payloadLen
         Serial.print(' ');
     }
     Serial.println("]");
+    return true;
+}
+
+static void queueSocialEncounterEvent(uint32_t token, int8_t rssi, uint32_t detectedAt) {
+    portENTER_CRITICAL(&g_socialEventMux);
+    if (g_socialEventCount == SOCIAL_EVENT_QUEUE_CAPACITY) {
+        g_socialEventHead = (g_socialEventHead + 1) % SOCIAL_EVENT_QUEUE_CAPACITY;
+        g_socialEventCount--;
+    }
+    uint8_t tail = (g_socialEventHead + g_socialEventCount) % SOCIAL_EVENT_QUEUE_CAPACITY;
+    g_socialEventQueue[tail] = { token, detectedAt, rssi };
+    g_socialEventCount++;
+    portEXIT_CRITICAL(&g_socialEventMux);
+}
+
+static void pollSocialEncounterEvents(uint32_t now) {
+    if (!g_connected || !g_eventTxSubscribed || !pEventTx) return;
+
+    SocialEncounterEvent encounter = {};
+    bool hasEvent = false;
+    portENTER_CRITICAL(&g_socialEventMux);
+    if (g_socialEventCount > 0) {
+        encounter = g_socialEventQueue[g_socialEventHead];
+        g_socialEventHead = (g_socialEventHead + 1) % SOCIAL_EVENT_QUEUE_CAPACITY;
+        g_socialEventCount--;
+        hasEvent = true;
+    }
+    portEXIT_CRITICAL(&g_socialEventMux);
+    if (!hasEvent) return;
+
+    uint32_t ageSeconds = (now - encounter.detectedAt) / 1000;
+    uint8_t payload[9];
+    payload[0] = (uint8_t)(encounter.token & 0xFF);
+    payload[1] = (uint8_t)((encounter.token >> 8) & 0xFF);
+    payload[2] = (uint8_t)((encounter.token >> 16) & 0xFF);
+    payload[3] = (uint8_t)((encounter.token >> 24) & 0xFF);
+    payload[4] = (uint8_t)encounter.rssi;
+    payload[5] = (uint8_t)(ageSeconds & 0xFF);
+    payload[6] = (uint8_t)((ageSeconds >> 8) & 0xFF);
+    payload[7] = (uint8_t)((ageSeconds >> 16) & 0xFF);
+    payload[8] = (uint8_t)((ageSeconds >> 24) & 0xFF);
+    if (!sendEvent(EVT_SOCIAL_ENCOUNTER, payload, sizeof(payload))) {
+        queueSocialEncounterEvent(encounter.token, encounter.rssi, encounter.detectedAt);
+    }
 }
 
 // =============================================================================
@@ -506,7 +623,8 @@ static void handleSetSocialMode(uint8_t seq, const uint8_t* payload, uint8_t len
         return;
     }
     g_socialMode = payload[0];
-    // TODO: 持久化到 NVS
+    g_preferences.putBool("social", g_socialMode != 0);
+    requestInteractionBeaconRefresh();
     uint8_t result[1] = { g_socialMode };
     sendResponse(CMD_SET_SOCIAL_MODE, seq, STATUS_OK, result, 1);
     Serial.print("  SocialMode set to: ");
@@ -519,6 +637,17 @@ static void stopFindDeviceAlert() {
     digitalWrite(PIN_ALERT, LOW);
     digitalWrite(PIN_LED, LOW);
     if (g_micReady) i2s_zero_dma_buffer(I2S_NUM_0);
+}
+
+static void startFindDeviceAlert(uint8_t alertType, uint16_t duration) {
+    g_alertActive = true;
+    g_alertEnd = millis() + duration;
+    g_alertToggle = true;
+    g_lastAlertToggle = millis();
+    g_alertType = alertType;
+    g_alertTonePhase = 0;
+    digitalWrite(PIN_ALERT, (alertType == 0 || alertType == 2) ? HIGH : LOW);
+    digitalWrite(PIN_LED, HIGH);
 }
 
 static void pollFindDeviceAlert(uint32_t now) {
@@ -577,15 +706,7 @@ static void handleFindDevice(uint8_t seq, const uint8_t* payload, uint8_t len) {
         return;
     }
 
-    // 启动 alert
-    g_alertActive = true;
-    g_alertEnd    = millis() + duration;
-    g_alertToggle = true;
-    g_lastAlertToggle = millis();
-    g_alertType = alertType;
-    g_alertTonePhase = 0;
-    digitalWrite(PIN_ALERT, (alertType == 0 || alertType == 2) ? HIGH : LOW);
-    digitalWrite(PIN_LED, HIGH);
+    startFindDeviceAlert(alertType, duration);
 
     Serial.print("  FIND_DEVICE type=");
     Serial.print(alertType);
@@ -594,6 +715,213 @@ static void handleFindDevice(uint8_t seq, const uint8_t* payload, uint8_t len) {
     Serial.println("ms");
 
     sendResponse(CMD_FIND_DEVICE, seq, STATUS_OK, nullptr, 0);
+}
+
+static bool socialDeadlineReached(uint32_t now, uint32_t deadline) {
+    return deadline == 0 || (int32_t)(now - deadline) >= 0;
+}
+
+static void buildInteractionBeacon(uint8_t* data) {
+    data[0] = 0x59; // Development manufacturer marker: "YT".
+    data[1] = 0x54;
+    data[2] = SOCIAL_BEACON_VERSION;
+    data[3] = g_socialMode ? SOCIAL_BEACON_FLAG_ENABLED : 0;
+    data[4] = (uint8_t)(g_socialDeviceToken & 0xFF);
+    data[5] = (uint8_t)((g_socialDeviceToken >> 8) & 0xFF);
+    data[6] = (uint8_t)((g_socialDeviceToken >> 16) & 0xFF);
+    data[7] = (uint8_t)((g_socialDeviceToken >> 24) & 0xFF);
+}
+
+static void requestInteractionBeaconRefresh() {
+    g_beaconDataDirty = true;
+}
+
+static void requestAdvertisingMode(bool connectable) {
+    g_desiredConnectableAdvertising = connectable;
+    g_advertisingModeDirty = true;
+}
+
+static void pollSocialAdvertising() {
+    if (!g_advertising) return;
+
+    const bool modeDirty = g_advertisingModeDirty;
+    const bool dataDirty = g_beaconDataDirty;
+    if (!modeDirty && !dataDirty) return;
+    g_advertisingModeDirty = false;
+    g_beaconDataDirty = false;
+
+    if (dataDirty) {
+        uint8_t beacon[SOCIAL_BEACON_LENGTH];
+        buildInteractionBeacon(beacon);
+        if (!g_advertising->setManufacturerData(beacon, sizeof(beacon))) {
+            Serial.println("  [ERR] Social beacon does not fit advertising data");
+        }
+    }
+
+    if (modeDirty) {
+        if (g_advertising->isAdvertising()) g_advertising->stop();
+        g_advertising->setConnectableMode(
+            g_desiredConnectableAdvertising ? BLE_GAP_CONN_MODE_UND : BLE_GAP_CONN_MODE_NON
+        );
+        if (!g_advertising->start()) {
+            Serial.println("  [ERR] Failed to restart social advertising");
+            g_advertisingModeDirty = true;
+            return;
+        }
+        Serial.println(
+            g_desiredConnectableAdvertising
+                ? "  Social advertising: connectable"
+                : "  Social advertising: non-connectable (phone remains connected)"
+        );
+    } else if (dataDirty && g_advertising->isAdvertising()) {
+        if (!g_advertising->refreshAdvertisingData()) {
+            Serial.println("  [WARN] Social beacon refresh failed; scheduling restart");
+            g_advertisingModeDirty = true;
+        }
+    }
+}
+
+static SocialPeerState* getSocialPeer(uint32_t token, uint32_t now) {
+    SocialPeerState* freeSlot = nullptr;
+    SocialPeerState* oldest = &g_socialPeers[0];
+    uint32_t oldestAge = 0;
+
+    for (uint8_t i = 0; i < SOCIAL_PEER_CAPACITY; i++) {
+        SocialPeerState* peer = &g_socialPeers[i];
+        if (peer->used && peer->token == token) return peer;
+        if (!peer->used && !freeSlot) freeSlot = peer;
+        if (peer->used) {
+            uint32_t age = now - peer->lastSeenAt;
+            if (age >= oldestAge) {
+                oldestAge = age;
+                oldest = peer;
+            }
+        }
+    }
+
+    SocialPeerState* peer = freeSlot ? freeSlot : oldest;
+    memset(peer, 0, sizeof(*peer));
+    peer->used = true;
+    peer->token = token;
+    return peer;
+}
+
+static void processSocialAdvertisement(uint32_t token, bool peerEnabled, int8_t rssi) {
+    if (token == 0 || token == g_socialDeviceToken) return;
+
+    uint32_t now = millis();
+    SocialPeerState* peer = getSocialPeer(token, now);
+    const bool lostBeforeThisPacket = peer->lastSeenAt != 0 &&
+        now - peer->lastSeenAt > SOCIAL_PEER_LOST_MS;
+    peer->lastSeenAt = now;
+
+    if (!g_socialMode || !peerEnabled) {
+        peer->inside = false;
+        peer->nearSamples = 0;
+        peer->farSamples = 0;
+        peer->filteredRssiQuarterDbm = (int16_t)rssi * 4;
+        return;
+    }
+
+    if (peer->filteredRssiQuarterDbm == 0 || lostBeforeThisPacket) {
+        peer->filteredRssiQuarterDbm = (int16_t)rssi * 4;
+        peer->inside = false;
+        peer->nearSamples = 0;
+        peer->farSamples = 0;
+    } else {
+        // EMA: 75% previous sample + 25% new sample, retained in quarter-dBm units.
+        peer->filteredRssiQuarterDbm =
+            (int16_t)((peer->filteredRssiQuarterDbm * 3 + (int16_t)rssi * 4) / 4);
+    }
+
+    const int16_t enterThreshold = SOCIAL_ENTER_RSSI_DBM * 4;
+    const int16_t exitThreshold = SOCIAL_EXIT_RSSI_DBM * 4;
+    if (peer->filteredRssiQuarterDbm >= enterThreshold) {
+        peer->farSamples = 0;
+        if (peer->nearSamples < SOCIAL_REQUIRED_SAMPLES) peer->nearSamples++;
+        if (!peer->inside && peer->nearSamples >= SOCIAL_REQUIRED_SAMPLES) {
+            peer->inside = true;
+            peer->nearSamples = 0;
+            if (socialDeadlineReached(now, peer->cooldownUntil)) {
+                peer->cooldownUntil = now + SOCIAL_PEER_COOLDOWN_MS;
+                const int8_t filteredRssi = (int8_t)(peer->filteredRssiQuarterDbm / 4);
+                queueSocialEncounterEvent(token, filteredRssi, now);
+                g_socialAlertToken = token;
+                g_socialAlertRssi = filteredRssi;
+                g_socialAlertQueuedAt = now;
+                g_socialAlertPending = true;
+            }
+        }
+    } else if (peer->filteredRssiQuarterDbm <= exitThreshold) {
+        peer->nearSamples = 0;
+        if (peer->farSamples < SOCIAL_REQUIRED_SAMPLES) peer->farSamples++;
+        if (peer->farSamples >= SOCIAL_REQUIRED_SAMPLES) {
+            peer->inside = false;
+            peer->farSamples = 0;
+        }
+    } else {
+        peer->nearSamples = 0;
+        peer->farSamples = 0;
+    }
+}
+
+class SocialScanCB : public NimBLEScanCallbacks {
+    void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override {
+        if (!advertisedDevice->haveManufacturerData()) return;
+        const std::string data = advertisedDevice->getManufacturerData();
+        if (data.size() != SOCIAL_BEACON_LENGTH) return;
+        if ((uint8_t)data[0] != 0x59 || (uint8_t)data[1] != 0x54 ||
+            (uint8_t)data[2] != SOCIAL_BEACON_VERSION) return;
+
+        const bool enabled = ((uint8_t)data[3] & SOCIAL_BEACON_FLAG_ENABLED) != 0;
+        const uint32_t token =
+            (uint32_t)(uint8_t)data[4] |
+            ((uint32_t)(uint8_t)data[5] << 8) |
+            ((uint32_t)(uint8_t)data[6] << 16) |
+            ((uint32_t)(uint8_t)data[7] << 24);
+        processSocialAdvertisement(token, enabled, advertisedDevice->getRSSI());
+    }
+
+    void onScanEnd(const NimBLEScanResults& scanResults, int reason) override {
+        (void)scanResults;
+        Serial.print("  Social scan ended, reason=");
+        Serial.println(reason);
+        g_socialScanRestartRequested = true;
+    }
+};
+
+static void pollSocialInteraction(uint32_t now) {
+    if (g_socialScan &&
+        (g_socialScanRestartRequested || !g_socialScan->isScanning()) &&
+        socialDeadlineReached(now, g_socialScanRetryAt)) {
+        g_socialScanRestartRequested = false;
+        if (!g_socialScan->start(0, false, true)) {
+            g_socialScanRetryAt = now + 1000;
+            g_socialScanRestartRequested = true;
+        } else {
+            Serial.println("  Social scan restarted");
+        }
+    }
+
+    if (!g_socialAlertPending) return;
+    if (!g_socialMode || now - g_socialAlertQueuedAt > 3000) {
+        g_socialAlertPending = false;
+        return;
+    }
+
+    const bool audioBusy = g_audioState == AUDIO_RECORDING ||
+        g_audioTransferState != AUDIO_TRANSFER_IDLE || g_ttsState != TTS_IDLE;
+    if (audioBusy || g_alertActive) return;
+
+    uint32_t token = g_socialAlertToken;
+    int8_t rssi = g_socialAlertRssi;
+    g_socialAlertPending = false;
+    startFindDeviceAlert(0, SOCIAL_ALERT_DURATION_MS);
+    Serial.print("  SOCIAL_PROXIMITY token=0x");
+    Serial.print(token, HEX);
+    Serial.print(" filteredRSSI=");
+    Serial.print(rssi);
+    Serial.println(" dBm; short vibration started");
 }
 
 // SET_TIME 0x05 — 时间同步
@@ -615,6 +943,16 @@ static void handlePing(uint8_t seq, const uint8_t* payload, uint8_t len) {
     sendResponse(CMD_PING, seq, STATUS_OK, payload, 4);
 }
 
+// GET_SOCIAL_TOKEN 0x07 — return the current boot-scoped anonymous beacon token.
+static void handleGetSocialToken(uint8_t seq) {
+    uint8_t data[4];
+    data[0] = (uint8_t)(g_socialDeviceToken & 0xFF);
+    data[1] = (uint8_t)((g_socialDeviceToken >> 8) & 0xFF);
+    data[2] = (uint8_t)((g_socialDeviceToken >> 16) & 0xFF);
+    data[3] = (uint8_t)((g_socialDeviceToken >> 24) & 0xFF);
+    sendResponse(CMD_GET_SOCIAL_TOKEN, seq, STATUS_OK, data, sizeof(data));
+}
+
 // 命令分发
 static void dispatchCommand(uint8_t cmd, uint8_t seq,
                             const uint8_t* payload, uint8_t payloadLen) {
@@ -631,6 +969,10 @@ static void dispatchCommand(uint8_t cmd, uint8_t seq,
         case CMD_FIND_DEVICE:     handleFindDevice(seq, payload, payloadLen);         break;
         case CMD_SET_TIME:        handleSetTime(seq, payload, payloadLen);            break;
         case CMD_PING:            handlePing(seq, payload, payloadLen);               break;
+        case CMD_GET_SOCIAL_TOKEN:
+            if (payloadLen != 0) sendResponse(cmd, seq, STATUS_INVALID_PAYLOAD, nullptr, 0);
+            else handleGetSocialToken(seq);
+            break;
         default:
             sendResponse(cmd, seq, STATUS_UNKNOWN_COMMAND, nullptr, 0);
             break;
@@ -705,9 +1047,35 @@ static void sendAudioError(uint8_t errorCode) {
         (uint8_t)((g_audioSession >> 8) & 0xFF),
         errorCode
     };
-    sendAudioStatus(status, sizeof(status));
+    if (sendAudioStatus(status, sizeof(status))) {
+        g_audioErrorPending = false;
+    } else if (g_audioState != AUDIO_IDLE) {
+        // META/CAPTURE_STOPPED may still have an outstanding indication.
+        // Preserve terminal errors across discard and retry them from loop().
+        g_audioErrorPending = true;
+        g_audioErrorSession = g_audioSession;
+        g_audioPendingErrorCode = errorCode;
+        g_audioErrorRetryAt = millis() + 100;
+    }
     Serial.print("  AUDIO ERROR: ");
     Serial.println(errorCode);
+}
+
+static void pollPendingAudioError(uint32_t now) {
+    if (!g_audioErrorPending || (int32_t)(now - g_audioErrorRetryAt) < 0 ||
+        !g_connected || !g_audioStatusSubscribed) return;
+    uint8_t status[4] = {
+        AUDIO_STATUS_ERROR,
+        (uint8_t)(g_audioErrorSession & 0xFF),
+        (uint8_t)((g_audioErrorSession >> 8) & 0xFF),
+        g_audioPendingErrorCode
+    };
+    if (sendAudioStatus(status, sizeof(status))) {
+        g_audioErrorPending = false;
+        Serial.println("  AUDIO: pending terminal error delivered");
+    } else {
+        g_audioErrorRetryAt = now + 100;
+    }
 }
 
 static bool initMicrophone() {
@@ -820,6 +1188,7 @@ static void clearRecordedAudio() {
     g_audioNextSendAt = 0;
     g_audioAckDeadline = 0;
     g_audioCompleteDeadline = 0;
+    g_audioRetainedDeadline = 0;
 }
 
 static void discardRecordedAudio() {
@@ -832,6 +1201,10 @@ static void beginAudioTransfer();
 
 static bool startAudioRecording() {
     stopFindDeviceAlert();
+    if (g_audioErrorPending) {
+        Serial.println("  AUDIO: waiting to deliver previous terminal status");
+        return false;
+    }
     if (g_ttsState != TTS_IDLE) {
         Serial.println("  AUDIO: speaker playback is busy");
         return false;
@@ -854,9 +1227,8 @@ static bool startAudioRecording() {
     g_audioSession++;
     if (g_audioSession == 0) g_audioSession = 1;
     g_speechDetected = false;
-    g_silenceFrames = 0;
-    g_noSpeechFrames = 0;
     g_recordStartedAt = millis();
+    g_lastSpeechAt = 0;
     i2s_zero_dma_buffer(I2S_NUM_0);
     g_audioState = AUDIO_RECORDING;
     digitalWrite(PIN_LED, HIGH);
@@ -897,10 +1269,18 @@ static void finishAudioRecording(bool bufferFull) {
         return;
     }
 
+    uint8_t stoppedStatus[3] = {
+        AUDIO_STATUS_CAPTURE_STOPPED,
+        (uint8_t)(g_audioSession & 0xFF),
+        (uint8_t)((g_audioSession >> 8) & 0xFF)
+    };
+    sendAudioStatus(stoppedStatus, sizeof(stoppedStatus));
+
     g_audioCrc32 = crc32_ieee(g_audioBuffer, g_audioBytes);
     g_audioFinalized = true;
     g_audioTotalChunks = (uint16_t)((g_audioBytes + g_audioChunkPayload - 1) / g_audioChunkPayload);
     g_audioState = AUDIO_RETAINED;
+    g_audioRetainedDeadline = millis() + AUDIO_RETAINED_TIMEOUT_MS;
     Serial.print("  AUDIO: captured samples=");
     Serial.print(g_audioSamples);
     Serial.print(" encodedBytes=");
@@ -912,6 +1292,16 @@ static void finishAudioRecording(bool bufferFull) {
 
 static void pollAudioRecording() {
     if (g_audioState != AUDIO_RECORDING) return;
+
+    const uint32_t now = millis();
+    if (now - g_recordStartedAt >= AUDIO_MAX_DURATION_MS ||
+        (!g_speechDetected && now - g_recordStartedAt >= AUDIO_NO_SPEECH_MS) ||
+        (g_speechDetected && g_lastSpeechAt != 0 &&
+         now - g_lastSpeechAt >= AUDIO_SILENCE_MS &&
+         g_audioSamples >= AUDIO_MIN_SAMPLES)) {
+        finishAudioRecording(false);
+        return;
+    }
 
     int32_t raw[AUDIO_FRAME_SAMPLES];
     size_t bytesRead = 0;
@@ -925,6 +1315,7 @@ static void pollAudioRecording() {
     if (result != ESP_OK || bytesRead == 0) return;
 
     size_t sampleCount = bytesRead / sizeof(int32_t);
+    size_t processedSamples = 0;
     uint64_t absoluteSum = 0;
     bool bufferFull = false;
     bool reachedLimit = false;
@@ -942,9 +1333,10 @@ static void pollAudioRecording() {
             bufferFull = true;
             break;
         }
+        processedSamples++;
     }
 
-    uint32_t meanAmplitude = sampleCount ? (uint32_t)(absoluteSum / sampleCount) : 0;
+    uint32_t meanAmplitude = processedSamples ? (uint32_t)(absoluteSum / processedSamples) : 0;
     static uint32_t lastVadLog = 0;
     if (millis() - lastVadLog >= 500) {
         lastVadLog = millis();
@@ -955,19 +1347,16 @@ static void pollAudioRecording() {
     }
     if (meanAmplitude >= AUDIO_VAD_THRESHOLD) {
         g_speechDetected = true;
-        g_silenceFrames = 0;
-    } else if (g_speechDetected) {
-        g_silenceFrames++;
-    } else {
-        g_noSpeechFrames++;
+        g_lastSpeechAt = now;
     }
 
     if (bufferFull || reachedLimit || g_audioSamples >= AUDIO_MAX_SAMPLES) {
         finishAudioRecording(bufferFull);
-    } else if (g_speechDetected && g_silenceFrames >= AUDIO_SILENCE_FRAMES &&
+    } else if (g_speechDetected && g_lastSpeechAt != 0 &&
+               now - g_lastSpeechAt >= AUDIO_SILENCE_MS &&
                g_audioSamples >= AUDIO_MIN_SAMPLES) {
         finishAudioRecording(false);
-    } else if (!g_speechDetected && g_noSpeechFrames >= AUDIO_NO_SPEECH_FRAMES) {
+    } else if (!g_speechDetected && now - g_recordStartedAt >= AUDIO_NO_SPEECH_MS) {
         finishAudioRecording(false);
     }
 
@@ -1030,8 +1419,9 @@ static void beginAudioTransfer() {
     Serial.println(g_audioState == AUDIO_RECORDING ? "yes" : "no");
 }
 
-static void sendAudioEnd() {
-    if (!g_audioFinalized || g_audioTransferState == AUDIO_TRANSFER_WAIT_COMPLETE) return;
+static bool sendAudioEnd() {
+    if (!g_audioFinalized) return false;
+    if (g_audioTransferState == AUDIO_TRANSFER_WAIT_COMPLETE) return true;
     uint8_t status[15] = {0};
     status[0] = AUDIO_STATUS_END;
     writeUint16LE(status + 1, g_audioSession);
@@ -1042,11 +1432,20 @@ static void sendAudioEnd() {
         g_audioTransferState = AUDIO_TRANSFER_WAIT_COMPLETE;
         g_audioCompleteDeadline = millis() + 5000;
         Serial.println("  AUDIO: all packets acknowledged, END sent");
+        return true;
     }
+    return false;
 }
 
 static void pollAudioTransfer() {
     uint32_t now = millis();
+    if (g_audioState == AUDIO_RETAINED && g_audioRetainedDeadline != 0 &&
+        (int32_t)(now - g_audioRetainedDeadline) >= 0) {
+        Serial.println("  AUDIO: retained transfer hard timeout; recording released");
+        sendAudioError(AUDIO_ERROR_TIMEOUT);
+        discardRecordedAudio();
+        return;
+    }
     if (!g_audioStreamStarted) {
         beginAudioTransfer();
         return;
@@ -1062,7 +1461,11 @@ static void pollAudioTransfer() {
 
         if (g_audioFinalized && g_audioNextSequence >= g_audioTotalChunks) {
             if (g_audioAckedSequence >= g_audioTotalChunks) {
-                sendAudioEnd();
+                if (!sendAudioEnd()) {
+                    // Another indication can still be awaiting confirmation.
+                    // Retry END from loop() without retransmitting audio data.
+                    g_audioNextSendAt = now + 100;
+                }
                 return;
             }
             g_audioTransferState = AUDIO_TRANSFER_WAIT_ACK;
@@ -1135,10 +1538,29 @@ static void handleAudioControl(const std::string& value) {
         if (g_audioFinalized && nextExpected > g_audioTotalChunks) return;
         if (g_audioTransferState == AUDIO_TRANSFER_WAIT_COMPLETE &&
             nextExpected >= g_audioTotalChunks) return;
-        g_audioAckedSequence = nextExpected;
-        g_audioAckRetries = 0;
+        const bool ackAdvanced = nextExpected > g_audioAckedSequence;
+        if (ackAdvanced) {
+            g_audioAckedSequence = nextExpected;
+            g_audioAckRetries = 0;
+        } else {
+            // A repeated ACK is effectively a NACK for the same missing
+            // sequence. It may request one resend, but it must not reset the
+            // retry budget forever.
+            if (++g_audioAckRetries > AUDIO_ACK_MAX_RETRIES) {
+                Serial.println("  AUDIO: repeated non-progress ACK; aborting session");
+                sendAudioError(AUDIO_ERROR_TIMEOUT);
+                discardRecordedAudio();
+                return;
+            }
+        }
         if (g_audioFinalized && nextExpected >= g_audioTotalChunks) {
-            sendAudioEnd();
+            // Never indicate END re-entrantly from the Audio Control write
+            // callback. Schedule it in loop(), where a pending status
+            // indication can finish first and END can be retried safely.
+            g_audioNextSequence = g_audioTotalChunks;
+            g_audioWindowSent = 0;
+            g_audioTransferState = AUDIO_TRANSFER_SENDING;
+            g_audioNextSendAt = millis() + 50;
         } else {
             g_audioNextSequence = nextExpected;
             g_audioWindowSent = 0;
@@ -1478,6 +1900,8 @@ static bool      g_btnLongReported = false;
 
 static uint32_t g_lastBtnCheck = 0;
 static bool     g_lastBtnRaw   = HIGH;
+static bool     g_stableBtnRaw = HIGH;
+static uint32_t g_btnRawChangedAt = 0;
 
 static void pollButton() {
     uint32_t now = millis();
@@ -1485,56 +1909,88 @@ static void pollButton() {
     g_lastBtnCheck = now;
 
     bool raw = digitalRead(PIN_BUTTON);
+    if (raw != g_lastBtnRaw) {
+        g_lastBtnRaw = raw;
+        g_btnRawChangedAt = now;
+    }
+    if (raw != g_stableBtnRaw && now - g_btnRawChangedAt >= BTN_DEBOUNCE_MS) {
+        g_stableBtnRaw = raw;
+    }
+    raw = g_stableBtnRaw;
 
-    if (raw == g_lastBtnRaw) {
-        // 稳定状态
-        switch (g_btnState) {
-            case B_IDLE:
-                if (!raw) {                     // 按下
-                    g_btnState     = B_PRESSED;
-                    g_btnPressTime = now;
-                    g_btnLongReported = false;
-                }
-                break;
-
-            case B_PRESSED:
-                if (!g_btnLongReported && (now - g_btnPressTime >= BTN_LONG_MS)) {
-                    // 长按
+    switch (g_btnState) {
+        case B_IDLE:
+            if (!raw) {                         // 按下
+                g_btnState = B_PRESSED;
+                g_btnPressTime = now;
+                g_btnLongReported = false;
+                if (g_audioState == AUDIO_RECORDING) {
+                    // Stop on the debounced press itself and consume the press,
+                    // so release cannot become a second click.
                     g_btnLongReported = true;
-                    Serial.println("  BTN: LONG_PRESS");
-                    sendButtonEvent(BTN_LONG_PRESS);
+                    Serial.println("  BTN: PRESS (stop recording immediately)");
+                    sendButtonEvent(BTN_CLICK);
+                    finishAudioRecording(false);
+                } else if (g_audioState != AUDIO_IDLE ||
+                           g_audioTransferState != AUDIO_TRANSFER_IDLE ||
+                           g_ttsState != TTS_IDLE ||
+                           g_audioErrorPending) {
+                    // A retained recording owns the audio pipeline until the
+                    // phone confirms reconstruction. Ignore all button actions
+                    // from this physical press and report a non-fatal busy state.
+                    g_btnLongReported = true;
+                    // Do not send another Audio Status indication here. END
+                    // uses the same indication channel and must not be starved
+                    // by repeated button presses during transfer.
+                    Serial.println("  AUDIO: previous recording still transferring; press ignored");
                 }
-                if (raw) {                      // 释放
-                    g_btnReleaseTime = now;
-                    if (!g_btnLongReported) {
-                        g_btnState = B_WAIT_DOUBLE;
-                    } else {
-                        g_btnState = B_IDLE;
-                    }
-                }
-                break;
+            }
+            break;
 
-            case B_WAIT_DOUBLE:
-                if (!raw) {                     // 第二次按下 → 双击
+        case B_PRESSED:
+            if (!g_btnLongReported && (now - g_btnPressTime >= BTN_LONG_MS)) {
+                // 长按
+                g_btnLongReported = true;
+                Serial.println("  BTN: LONG_PRESS");
+                sendButtonEvent(BTN_LONG_PRESS);
+            }
+            if (raw) {                          // 释放
+                g_btnReleaseTime = now;
+                if (!g_btnLongReported) {
+                    g_btnState = B_WAIT_DOUBLE;
+                } else {
                     g_btnState = B_IDLE;
-                    Serial.println("  BTN: DOUBLE_CLICK");
-                    sendButtonEvent(BTN_DOUBLE_CLICK);
-                } else if (now - g_btnReleaseTime >= BTN_DOUBLE_GAP_MS) {
-                    // 超时 → 单击
-                    g_btnState = B_IDLE;
+                }
+            }
+            break;
+
+        case B_WAIT_DOUBLE:
+            if (!raw) {                         // 第二次按下 → 双击
+                // Stay in a consumed pressed state until the second press is
+                // released. Returning to B_IDLE here would count the same held
+                // press again and create duplicate click events.
+                g_btnState = B_PRESSED;
+                g_btnPressTime = now;
+                g_btnLongReported = true;
+                Serial.println("  BTN: DOUBLE_CLICK");
+                sendButtonEvent(BTN_DOUBLE_CLICK);
+            } else if (now - g_btnReleaseTime >= BTN_DOUBLE_GAP_MS) {
+                // 超时 → 单击
+                g_btnState = B_IDLE;
+                if (g_audioState == AUDIO_IDLE &&
+                    g_audioTransferState == AUDIO_TRANSFER_IDLE &&
+                    g_ttsState == TTS_IDLE) {
                     Serial.println("  BTN: CLICK");
                     sendButtonEvent(BTN_CLICK);
-                    if (g_audioState == AUDIO_RECORDING) {
-                        // 再次短按可提前结束；仍会检查最短时长和是否检测到语音。
-                        finishAudioRecording(false);
-                    } else {
-                        startAudioRecording();
-                    }
+                    startAudioRecording();
+                } else if (g_audioState == AUDIO_RECORDING) {
+                    Serial.println("  BTN: CLICK (stop recording)");
+                    sendButtonEvent(BTN_CLICK);
+                    finishAudioRecording(false);
                 }
-                break;
-        }
+            }
+            break;
     }
-    g_lastBtnRaw = raw;
 }
 
 // =============================================================================
@@ -1580,6 +2036,7 @@ class ServerCB : public NimBLEServerCallbacks {
         g_connected = true;
         g_connHandle = connInfo.getConnHandle();
         g_lowBatterySent = false;
+        requestAdvertisingMode(false);
         Serial.println("<<< Client connected >>>");
     }
 
@@ -1587,6 +2044,7 @@ class ServerCB : public NimBLEServerCallbacks {
                       NimBLEConnInfo& connInfo, int reason) override {
         (void)pServer;
         g_connected = false;
+        g_eventTxSubscribed = false;
         g_audioDataSubscribed = false;
         g_audioStatusSubscribed = false;
         g_ttsStatusSubscribed = false;
@@ -1604,6 +2062,7 @@ class ServerCB : public NimBLEServerCallbacks {
             g_audioAckRetries = 0;
         }
         if (g_ttsState != TTS_IDLE) resetTtsSession();
+        requestAdvertisingMode(true);
         Serial.print("<<< Client disconnected, reason=");
         Serial.print(reason);
         Serial.println(" >>>");
@@ -1613,6 +2072,17 @@ class ServerCB : public NimBLEServerCallbacks {
         (void)connInfo;
         Serial.print("  BLE MTU changed: ");
         Serial.println(mtu);
+    }
+};
+
+class EventTxCB : public NimBLECharacteristicCallbacks {
+    void onSubscribe(NimBLECharacteristic* pChar,
+                     NimBLEConnInfo& connInfo, uint16_t subValue) override {
+        (void)pChar;
+        g_connHandle = connInfo.getConnHandle();
+        g_eventTxSubscribed = (subValue & 0x01) != 0;
+        Serial.print("  Event TX subscribed: ");
+        Serial.println(g_eventTxSubscribed ? "yes" : "no");
     }
 };
 
@@ -1834,6 +2304,16 @@ void setup() {
     digitalWrite(PIN_ALERT, LOW);
     digitalWrite(PIN_LED, LOW);
 
+    if (g_preferences.begin("yuntuan", false)) {
+        g_socialMode = g_preferences.getBool("social", false) ? 1 : 0;
+        Serial.print("  SocialMode restored: ");
+        Serial.println(g_socialMode);
+    } else {
+        Serial.println("  [WARN] Cannot open preferences; SocialMode will not persist");
+    }
+    g_socialDeviceToken = esp_random();
+    if (g_socialDeviceToken == 0) g_socialDeviceToken = 1;
+
     // 录音缓冲在启动时一次性分配。N16R8 优先使用 PSRAM，避免录音期间动态申请内存。
     g_audioBuffer = (uint8_t*)heap_caps_malloc(
         AUDIO_BUFFER_CAPACITY,
@@ -1880,7 +2360,7 @@ void setup() {
 
     pBleServer = NimBLEDevice::createServer();
     pBleServer->setCallbacks(new ServerCB());
-    pBleServer->advertiseOnDisconnect(true);
+    pBleServer->advertiseOnDisconnect(false);
 
     // ── Battery Service ──
     NimBLEService* pBatterySvc = pBleServer->createService(BATTERY_SERVICE_UUID);
@@ -1919,6 +2399,7 @@ void setup() {
         EVENT_TX_UUID,
         NIMBLE_PROPERTY::NOTIFY
     );
+    pEventTx->setCallbacks(new EventTxCB());
 
     // protocolInfo: Read, 固定 6 字节
     NimBLECharacteristic* pProtoInfo = pCtrlSvc->createCharacteristic(
@@ -1986,17 +2467,38 @@ void setup() {
     Serial.println("  [OK] Speech Playback Service");
 
     // ── 广播 ──
-    NimBLEAdvertising* pAdv = NimBLEDevice::getAdvertising();
-    pAdv->addServiceUUID(CONTROL_SERVICE_UUID);
-    pAdv->addServiceUUID(BATTERY_SERVICE_UUID);
-    pAdv->enableScanResponse(true);
-    pAdv->setName(DEVICE_NAME);
+    g_advertising = NimBLEDevice::getAdvertising();
+    g_advertising->addServiceUUID(CONTROL_SERVICE_UUID);
+    // The battery UUID remains discoverable after connection. Omitting it here
+    // leaves enough legacy advertising space for the passive social beacon.
+    g_advertising->enableScanResponse(true);
+    g_advertising->setName(DEVICE_NAME);
+    uint8_t socialBeacon[SOCIAL_BEACON_LENGTH];
+    buildInteractionBeacon(socialBeacon);
+    g_advertising->setManufacturerData(socialBeacon, sizeof(socialBeacon));
+    g_advertising->setConnectableMode(BLE_GAP_CONN_MODE_UND);
     // 广播间隔 100-125ms（实验室联调）
-    pAdv->setMinInterval(160);  // 100ms = 160 * 0.625ms
-    pAdv->setMaxInterval(200);  // 125ms
-    pAdv->start();
+    g_advertising->setMinInterval(160);  // 100ms = 160 * 0.625ms
+    g_advertising->setMaxInterval(200);  // 125ms
+    g_advertising->start();
 
     Serial.println("  [OK] Advertising started");
+
+    // Passive, callback-only, continuous scan. A 20% duty cycle leaves BLE
+    // controller time for phone audio transfer while still collecting duplicates.
+    g_socialScan = NimBLEDevice::getScan();
+    g_socialScan->setScanCallbacks(new SocialScanCB(), true);
+    g_socialScan->setActiveScan(false);
+    g_socialScan->setInterval(SOCIAL_SCAN_INTERVAL_MS);
+    g_socialScan->setWindow(SOCIAL_SCAN_WINDOW_MS);
+    g_socialScan->setMaxResults(0);
+    if (g_socialScan->start(0, false, true)) {
+        Serial.println("  [OK] Continuous social scan started");
+    } else {
+        Serial.println("  [WARN] Social scan start failed; loop will retry");
+        g_socialScanRestartRequested = true;
+        g_socialScanRetryAt = millis() + 1000;
+    }
     Serial.println("══════════════════════════════════════════");
 }
 
@@ -2014,6 +2516,7 @@ void loop() {
     }
 
     // ── 按键轮询 ──
+    pollPendingAudioError(now);
     pollButton();
 
     // ── 挂件录音与 BLE 音频分包 ──
@@ -2026,6 +2529,11 @@ void loop() {
 
     // ── FIND_DEVICE：GPIO2 振动输出 + MAX98357A 提示音 + 状态灯 ──
     pollFindDeviceAlert(now);
+
+    // ── Device-to-device social proximity ──
+    pollSocialAdvertising();
+    pollSocialInteraction(now);
+    pollSocialEncounterEvents(now);
 
     // 录音上传由主循环逐包 Notify。发送态也必须快速轮询，否则 6 ms
     // 的包间隔会被这里的 10 ms 睡眠放大，低 MTU 时尤其明显。

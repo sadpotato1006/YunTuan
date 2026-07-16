@@ -1,5 +1,21 @@
 <view class="page">
   <view class="title settings-title">陪伴设置</view>
+  <view class="card social-profile-entry" bindtap="goSocialProfile">
+    <image wx:if="{{socialProfile.avatarType === 'custom'}}" class="profile-entry-avatar" src="{{socialProfile.avatarValue}}" mode="aspectFill" />
+    <view wx:else class="profile-entry-avatar virtual-profile-avatar" style="background: {{socialProfile.avatarColor}}">{{socialProfile.avatarValue}}</view>
+    <view class="profile-entry-content">
+      <view class="profile-entry-name-row">
+        <text class="profile-entry-name">{{socialProfile.nickname}}</text>
+        <text class="profile-entry-intention">{{socialProfile.intentionLabel}}</text>
+      </view>
+      <text class="profile-entry-bio">{{socialProfile.bio}}</text>
+      <view wx:if="{{socialProfile.tags.length}}" class="profile-entry-tags">
+        <text wx:for="{{socialProfile.tags}}" wx:key="*this">{{item}}</text>
+      </view>
+      <text class="profile-edit-hint">点击进入编辑名片</text>
+    </view>
+    <text class="arrow">›</text>
+  </view>
   <view class="card list-card">
     <view class="setting-item"><view><view>社交提醒</view><text>有人想和您互动时提醒</text></view><switch checked="{{settings.socialReminder}}" color="#52796F" data-key="socialReminder" bindchange="updateSetting" /></view>
     <view class="setting-item"><view><view>振动反馈</view><text>重要操作时轻微振动</text></view><switch checked="{{settings.vibration}}" color="#52796F" data-key="vibration" bindchange="updateSetting" /></view>
