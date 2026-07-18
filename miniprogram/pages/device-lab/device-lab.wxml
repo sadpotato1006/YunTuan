@@ -1,0 +1,58 @@
+<view class="page lab-page">
+  <view class="lab-hero">
+    <text class="lab-eyebrow">DEVELOPMENT TOOLS</text>
+    <view class="title">设备详细信息</view>
+    <text class="lab-description">设备版本、连接管理、模拟测试与 BLE 联调统一放在这里。</text>
+  </view>
+
+  <view class="card lab-status-card">
+    <view class="status-main">
+      <view class="lab-device-icon">{{device.simulated ? '拟' : '硬'}}</view>
+      <view>
+        <text class="status-title">{{device.ready ? (device.simulated ? '模拟挂件已连接' : '真实挂件已连接') : '尚未连接设备'}}</text>
+        <text class="status-copy">{{device.ready ? ('BLE ' + device.protocolMajor + '.' + device.protocolMinor + ' · 电量 ' + (device.battery === null ? '--' : device.battery) + '%') : '加载模拟挂件后即可测试社交闭环'}}</text>
+      </view>
+    </view>
+    <view wx:if="{{device.connected}}" class="detail-grid">
+      <view><text>设备型号</text><text>{{device.modelNumber || '--'}}</text></view>
+      <view><text>固件版本</text><text>{{device.firmwareRevision || '--'}}</text></view>
+      <view><text>硬件版本</text><text>{{device.hardwareRevision || '--'}}</text></view>
+      <view><text>协议版本</text><text>{{device.protocolMajor}}.{{device.protocolMinor}}</text></view>
+      <view><text>设备类型</text><text>{{device.simulated ? '模拟设备' : '真实设备'}}</text></view>
+      <view><text>安全模式</text><text>{{device.securityMode === 0 ? '实验室模式' : '认证模式'}}</text></view>
+    </view>
+    <button wx:if="{{!device.simulated}}" class="load-simulator-button" loading="{{operating}}" disabled="{{operating || device.connected}}" bindtap="loadSimulator">加载模拟挂件</button>
+    <button wx:if="{{device.connected}}" class="disconnect-detail-button" loading="{{operating}}" disabled="{{operating}}" bindtap="disconnectDevice">断开当前设备</button>
+  </view>
+
+  <block wx:if="{{device.simulated && device.ready}}">
+    <view class="section-head"><text>社交流程测试</text><text>无需硬件</text></view>
+    <view class="card solo-test-card">
+      <text class="card-title">一个账号完整测试</text>
+      <text class="card-tip">自动创建隔离的测试伙伴，覆盖相遇、招呼、聊天和联系方式流程。</text>
+      <button class="solo-test-button" loading="{{operating}}" disabled="{{operating || !device.socialMode}}" bindtap="startSoloSocialTest">创建测试伙伴并模拟相遇</button>
+      <text wx:if="{{!device.socialMode}}" class="warning-tip">请先返回设备页开启社交模式</text>
+    </view>
+
+    <view class="card dual-test-card">
+      <text class="card-title">两个账号联调</text>
+      <text class="card-tip">双方交换 Token，分别模拟遇见对方。</text>
+      <view class="token-row">
+        <view><text>本机模拟 Token</text><text class="token-value" selectable>{{device.ownSocialToken}}</text></view>
+        <button bindtap="copySimulatorToken">复制</button>
+      </view>
+      <view class="dual-actions">
+        <button disabled="{{operating}}" bindtap="registerSimulatorToken">重新登记</button>
+        <button class="inject-button" disabled="{{operating || !device.socialMode}}" bindtap="promptSimulatorEncounter">输入对方 Token</button>
+      </view>
+    </view>
+  </block>
+
+  <view class="section-head"><text>底层联调</text><text>开发人员</text></view>
+  <view class="card tool-list">
+    <view class="tool-item {{!device.ready ? 'disabled' : ''}}" bindtap="pingDevice"><view><text>测试控制通信</text><text>发送 Ping 并验证控制帧响应</text></view><text>›</text></view>
+    <view class="tool-item" bindtap="goBleDebug"><view><text>通用 BLE 联调工具</text><text>服务、特征值、读写与通知测试</text></view><text>›</text></view>
+  </view>
+
+  <text class="lab-footnote">真实 RSSI 距离、广播扫描、物理振动、按键、录音与功耗仍需真机验证。</text>
+</view>

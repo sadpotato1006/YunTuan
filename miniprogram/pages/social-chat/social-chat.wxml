@@ -1,0 +1,83 @@
+<view class="chat-page">
+  <view class="partner-strip">
+    <image wx:if="{{profile.avatarType === 'custom'}}" class="partner-avatar" src="{{profile.avatarValue}}" mode="aspectFill" />
+    <view wx:else class="partner-avatar virtual-avatar" style="background: {{profile.avatarColor}}">{{profile.avatarValue}}</view>
+    <view class="partner-copy">
+      <text class="partner-name">{{profile.nickname}}</text>
+      <text class="privacy-tip">只有已互相确认的伙伴可以发送消息</text>
+    </view>
+    <button class="safety-menu" bindtap="openSafetyMenu">•••</button>
+  </view>
+
+  <view wx:if="{{profile.isSoloTest}}" class="solo-test-bar">
+    <view>
+      <text class="solo-test-title">单人测试模式</text>
+      <text class="solo-test-tip">这是隔离的虚拟伙伴，不对应真实用户</text>
+    </view>
+    <button loading="{{soloTestOperating}}" disabled="{{soloTestOperating || relationshipEnded}}" bindtap="openSoloTestMenu">模拟对方操作</button>
+  </view>
+
+  <view wx:if="{{contactExchange.status === 'pending_received'}}" class="contact-notice">
+    <view class="contact-notice-copy">
+      <text class="contact-notice-title">TA 想和你交换联系方式</text>
+      <text>同意后也不会自动分享，双方仍需各自选择要分享的内容。</text>
+    </view>
+    <view class="contact-notice-actions">
+      <button data-accept="{{false}}" disabled="{{contactSaving}}" bindtap="respondContactExchange">拒绝</button>
+      <button class="contact-accept" data-accept="{{true}}" loading="{{contactSaving}}" disabled="{{contactSaving}}" bindtap="respondContactExchange">同意</button>
+    </view>
+  </view>
+
+  <view wx:if="{{contactExchange.status === 'pending_sent'}}" class="contact-notice compact-notice">
+    <view class="contact-notice-copy">
+      <text class="contact-notice-title">联系方式交换申请已发送</text>
+      <text>等待对方明确同意，当前不会展示任何联系方式。</text>
+    </view>
+    <button class="cancel-contact-request" disabled="{{contactSaving}}" bindtap="cancelContactExchange">撤回申请</button>
+  </view>
+
+  <view wx:if="{{contactExchange.status === 'accepted'}}" class="contact-access" bindtap="openContactExchange">
+    <view class="contact-access-icon">联</view>
+    <view class="contact-access-copy">
+      <text class="contact-access-title">联系方式</text>
+      <text class="contact-access-summary">{{contactSummary}}</text>
+    </view>
+    <text class="contact-access-arrow">›</text>
+  </view>
+
+  <view wx:if="{{relationshipEnded}}" class="relationship-ended">伙伴关系已解除，当前会话不能继续发送消息。</view>
+
+  <view wx:if="{{!loading && !messages.length && !relationshipEnded}}" class="starter-card">
+    <text class="starter-title">发一句问候</text>
+    <text class="starter-tip">点击下面的句子会填入输入框，由你确认后再发送。</text>
+    <button wx:for="{{prompts}}" wx:key="*this" class="starter-button" data-content="{{item}}" disabled="{{messagePolicy.blocked}}" bindtap="usePrompt">{{item}}</button>
+  </view>
+
+  <scroll-view class="message-list" scroll-y scroll-with-animation scroll-into-view="{{scrollTarget}}">
+    <view wx:if="{{loading}}" class="loading">正在打开会话…</view>
+    <view wx:elif="{{!messages.length}}" class="empty-space"></view>
+    <view wx:if="{{messages.length}}" class="history-loader">
+      <button wx:if="{{hasMoreMessages}}" loading="{{loadingMoreMessages}}" disabled="{{loadingMoreMessages}}" bindtap="loadEarlierMessages">加载更早消息</button>
+      <text wx:else>已经到最早的消息了</text>
+    </view>
+    <view wx:for="{{messages}}" wx:key="id" id="message-{{item.id}}" class="message-row {{item.sender === 'me' ? 'mine' : 'peer'}}">
+      <view class="bubble" data-id="{{item.id}}" data-sender="{{item.sender}}" bindlongpress="reportMessage">{{item.content}}</view>
+      <text class="message-time">{{item.timeText}}{{item.sender === 'peer' ? ' · 长按可举报' : ''}}</text>
+    </view>
+    <view id="message-bottom" class="message-bottom"></view>
+  </scroll-view>
+
+  <view class="composer-wrap">
+    <view wx:if="{{messagePolicy.limited}}" class="pre-reply-limit {{messagePolicy.blocked ? 'blocked' : ''}}">
+      <text>{{messagePolicy.tip}}</text>
+    </view>
+    <view wx:if="{{showEmojis}}" class="emoji-panel">
+      <button wx:for="{{emojis}}" wx:key="*this" class="emoji-item" data-emoji="{{item}}" bindtap="appendEmoji">{{item}}</button>
+    </view>
+    <view class="composer">
+      <button class="emoji-toggle" disabled="{{relationshipEnded || messagePolicy.blocked}}" bindtap="toggleEmojis">😊</button>
+      <input class="message-input" value="{{inputValue}}" maxlength="300" disabled="{{relationshipEnded || messagePolicy.blocked}}" placeholder="{{relationshipEnded ? '伙伴关系已解除' : (messagePolicy.blocked ? '等待对方回复' : '输入消息')}}" confirm-type="send" cursor-spacing="24" bindinput="onInput" bindconfirm="sendMessage" />
+      <button class="send-button" loading="{{sending}}" disabled="{{sending || relationshipEnded || messagePolicy.blocked}}" bindtap="sendMessage">发送</button>
+    </view>
+  </view>
+</view>

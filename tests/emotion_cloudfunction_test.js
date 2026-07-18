@@ -22,6 +22,12 @@ function createCollection() {
               };
             }
           };
+        },
+        async remove() {
+          Array.from(documents.entries()).forEach(([id, item]) => {
+            if (Object.keys(query).every(key => item[key] === query[key])) documents.delete(id);
+          });
+          return {};
         }
       };
     },
@@ -68,6 +74,7 @@ Module._load = originalLoad;
   assert.strictEqual(first.code, 0);
   assert.strictEqual(first.data.records.length, 1);
   assert.strictEqual(first.data.record.name, "开心");
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(first.data.record, "score"), false);
   assert.strictEqual(first.data.record.note, "今天和老朋友聊了会儿天。");
   assert.strictEqual(first.data.record.noteCustomized, true);
 
@@ -81,6 +88,30 @@ Module._load = originalLoad;
   assert.strictEqual(updated.data.records[0].name, "平静");
   assert.strictEqual(updated.data.records[0].note, "今天心里很安稳，平平淡淡也很好。");
   assert.strictEqual(updated.data.records[0].noteCustomized, false);
+
+  const defaultTextSubmitted = await emotionFunction.main({
+    action: "addEmotionRecord",
+    name: "开心",
+    note: "今天心情很好，想把这份快乐记下来。"
+  });
+  assert.strictEqual(defaultTextSubmitted.code, 0);
+  assert.strictEqual(defaultTextSubmitted.data.record.note, "今天心情很好，想把这份快乐记下来。");
+  assert.strictEqual(defaultTextSubmitted.data.record.noteCustomized, false);
+
+  currentOpenid = "legacy-emotion-user";
+  const legacyOwnerKey = require("crypto").createHash("sha256").update(currentOpenid).digest("hex");
+  documents.set("legacy-record", {
+    _id: "legacy-record",
+    ownerKey: legacyOwnerKey,
+    dayKey: "2026-07-16",
+    date: "7月16日",
+    name: "一般",
+    score: 70
+  });
+  const legacyRecords = await emotionFunction.main({ action: "getEmotionRecords" });
+  assert.strictEqual(legacyRecords.code, 0);
+  assert.strictEqual(legacyRecords.data.records[0].note, "今天心情比较平常，慢慢照顾好自己。");
+  assert.strictEqual(legacyRecords.data.records[0].noteCustomized, false);
 
   currentOpenid = "emotion-user-2";
   const isolated = await emotionFunction.main({ action: "getEmotionSummary" });
@@ -96,6 +127,11 @@ Module._load = originalLoad;
     note: "记".repeat(101)
   });
   assert.strictEqual(noteTooLong.code, 400);
+
+  currentOpenid = "emotion-user-1";
+  const deleted = await emotionFunction.main({ action: "deleteMyEmotionRecords" });
+  assert.strictEqual(deleted.code, 0);
+  assert.deepStrictEqual((await emotionFunction.main({ action: "getEmotionRecords" })).data.records, []);
   console.log("emotion cloud function tests passed");
 })().catch(error => {
   console.error(error);

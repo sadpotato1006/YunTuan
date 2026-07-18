@@ -28,6 +28,8 @@ const COMMANDS = {
   SET_TIME: 0x05,
   PING: 0x06,
   GET_SOCIAL_TOKEN: 0x07,
+  ACK_SOCIAL_ENCOUNTER: 0x08,
+  SET_ALERT_SETTINGS: 0x09,
   STATUS_CHANGED: 0x20,
   BUTTON_EVENT: 0x21,
   LOW_BATTERY: 0x22,
@@ -55,11 +57,12 @@ module.exports = {
   connectTimeout: 8000,
   commandTimeout: 2000,
   commandRetries: 2,
-  maxPayloadLength: 10,
+  controlMinMTU: 31,
+  maxPayloadLength: 18,
   sof: 0xA5,
   protocolVersion: 0x01,
   protocolMajor: 0x01,
-  protocolMinor: 0x05,
+  protocolMinor: 0x07,
   flags: {
     request: 0x00,
     response: 0x01,
@@ -77,7 +80,8 @@ module.exports = {
     ota: 1 << 7,
     audioUpload: 1 << 8,
     audioPlayback: 1 << 9,
-    socialEncounter: 1 << 10
+    socialEncounter: 1 << 10,
+    alertSettings: 1 << 11
   },
   UUIDS,
   COMMANDS,

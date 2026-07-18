@@ -143,7 +143,7 @@ Protocol Info 特征值固定返回 6 字节：
 | 偏移 | 长度 | 字段 | 当前要求 |
 | ---: | ---: | --- | --- |
 | 0 | 1 | ProtocolMajor | `0x01` |
-| 1 | 1 | ProtocolMinor | `0x00` |
+| 1 | 1 | ProtocolMinor | `0x07` |
 | 2 | 2 | Capabilities | uint16，小端 |
 | 4 | 1 | SecurityMode | 实验室模式为 `0x00` |
 | 5 | 1 | Reserved | 固定 `0x00` |
@@ -160,7 +160,11 @@ Capabilities：
 | 5 | `0x0020` | 设备时间同步 |
 | 6 | `0x0040` | 量产会话认证 |
 | 7 | `0x0080` | OTA，当前阶段不得置 1 |
-| 8～15 | — | 保留，必须置 0 |
+| 8 | `0x0100` | 实时录音上传 |
+| 9 | `0x0200` | 边收边播 |
+| 10 | `0x0400` | 可靠相遇事件与 ACK |
+| 11 | `0x0800` | 提醒策略同步 |
+| 12～15 | — | 保留，必须置 0 |
 
 基础联调示例：
 
@@ -180,7 +184,7 @@ Capabilities：
 - 时间使用 uint32 Unix 秒；
 - 所有保留位和保留字节发送时必须为 0；
 - 设备必须先校验长度、范围、帧类型和 CRC，再执行命令；
-- 当前应用 Payload 最大 10 字节，不支持分片。
+- 当前控制协议 Payload 最大 18 字节，不支持分片。
 
 ## 7. 应用层数据帧
 
@@ -197,7 +201,7 @@ Capabilities：
 | 4 | 1 | Sequence | 请求序号 |
 | 5 | 1 | FragmentIndex | 当前固定 `0x00` |
 | 6 | 1 | FragmentCount | 当前固定 `0x01` |
-| 7 | 1 | PayloadLength | `0～10` |
+| 7 | 1 | PayloadLength | `0～18` |
 | 8 | N | Payload | 命令数据 |
 | 8+N | 2 | CRC16 | 小端，低字节在前 |
 
@@ -300,6 +304,9 @@ A5 01 00 02 01 00 01 00 A9 48
 | `0x04` | FIND_DEVICE | 3 | 0 | 有输出器件时必须 |
 | `0x05` | SET_TIME | 4 | 0 | 建议 |
 | `0x06` | PING | 4 | 4 | 必须 |
+| `0x07` | GET_SOCIAL_TOKEN | 0 | 4 | 支持相遇时必须 |
+| `0x08` | ACK_SOCIAL_ENCOUNTER | 8 | 1 | 支持相遇时必须 |
+| `0x09` | SET_ALERT_SETTINGS | 3 | 3 | 支持提醒设置时必须 |
 | `0x10～0x1F` | 认证命令 | 未定义 | 未定义 | 保留，不得使用 |
 
 ### 9.2 HELLO `0x01`
@@ -359,7 +366,7 @@ HELLO 返回的版本、能力和安全模式必须与 Protocol Info 一致。�
 
 | 偏移 | 长度 | 字段 | 合法值 |
 | ---: | ---: | --- | --- |
-| 0 | 1 | AlertType | 0 振动；1 提示音；2 振动和提示音 |
+| 0 | 1 | AlertType | 0 振动；1 提示音；2 振动和提示音；3 仅闪灯 |
 | 1 | 2 | Duration | uint16 毫秒，小端，500～10000 |
 
 成功响应无附加数据。设备收到重复 Sequence 时不得重复触发振动或提示音。
@@ -372,6 +379,18 @@ HELLO 返回的版本、能力和安全模式必须与 Protocol Info 一致。�
 
 请求数据固定为 4 字节随机值，成功响应必须原样返回相同 4 字节。PING 不改变设备状态。
 
+### 9.8 SET_ALERT_SETTINGS `0x09`
+
+请求数据和成功响应数据均固定为 3 字节：
+
+| 偏移 | 长度 | 字段 | 合法值 |
+| ---: | ---: | --- | --- |
+| 0 | 1 | SocialReminder | 0 关闭相遇提醒；1 开启 |
+| 1 | 1 | Vibration | 0 关闭振动；1 开启 |
+| 2 | 1 | Sound | 0 关闭声音；1 开启 |
+
+设备必须先持久化并实际应用设置，再原样返回三个生效值。SocialReminder 为 0 时，相遇仍可记录和上报，但不得在挂件或小程序端主动提醒；Vibration 和 Sound 同时为 0 时，查找设备使用仅闪灯模式。
+
 ## 10. 设备主动事件
 
 主动事件必须满足：
@@ -380,7 +399,7 @@ HELLO 返回的版本、能力和安全模式必须与 Protocol Info 一致。�
 - Flags=`0x02`；
 - Sequence=`0x00`；
 - 使用正常帧结构和 CRC；
-- 不要求小程序返回应用层响应。
+- 除 `SOCIAL_ENCOUNTER` 外，不要求小程序返回应用层响应；相遇事件必须在本地落盘后通过 `0x08` ACK。
 
 | Command | 名称 | Payload 长度 | Payload |
 | ---: | --- | ---: | --- |
@@ -388,6 +407,7 @@ HELLO 返回的版本、能力和安全模式必须与 Protocol Info 一致。�
 | `0x21` | BUTTON_EVENT | 5 | ButtonType、UnixTime uint32 小端 |
 | `0x22` | LOW_BATTERY | 1 | Battery，0～100 |
 | `0x23` | BIND_WINDOW_CHANGED | 1 | BindState：0～2，可选 |
+| `0x24` | SOCIAL_ENCOUNTER | 18 | EncounterId 8 字节、PeerToken 4 字节、RSSI 1 字节、UnixTime 4 字节、Flags 1 字节 |
 
 ButtonType：
 
@@ -422,7 +442,10 @@ ButtonType：
   → 如果存在则读取 Serial Number
   → 读取 Battery Level
   → 发送 HELLO 并等待匹配响应
+  → 支持时间同步时发送 SET_TIME
   → 发送 GET_STATUS 并等待匹配响应
+  → 发送 SET_ALERT_SETTINGS 同步本机提醒策略
+  → 支持相遇时发送 GET_SOCIAL_TOKEN
   → READY
 ```
 
@@ -522,6 +545,8 @@ UUID 存在后，小程序还会通过实际操作继续检查：
 | B14 | 错误 CRC | 不执行命令，丢弃或返回 CRC_ERROR |
 | B15 | 错误 Payload | 不执行命令，返回 INVALID_PAYLOAD |
 | B16 | 断线恢复 | 1 秒内恢复广播，小程序可重新连接 |
+| B17 | SET_ALERT_SETTINGS | 三个设置持久化，重启后仍生效 |
+| B18 | 相遇 ACK | 本地落盘后 ACK，重复事件不产生重复记录 |
 
 ## 16. 版本规则
 

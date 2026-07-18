@@ -1,0 +1,45 @@
+.lab-page { padding-bottom: calc(60rpx + env(safe-area-inset-bottom)); }
+.lab-hero { margin: 8rpx 4rpx 30rpx; }
+.lab-eyebrow { color: #9a7b45; font-size: 19rpx; letter-spacing: 3rpx; }
+.lab-description { display: block; margin-top: 10rpx; color: #71807b; font-size: 24rpx; line-height: 1.5; }
+.lab-status-card { padding: 28rpx; }
+.status-main { display: flex; align-items: center; gap: 18rpx; }
+.lab-device-icon { width: 72rpx; height: 72rpx; flex: 0 0 72rpx; display: flex; align-items: center; justify-content: center; border-radius: 20rpx; background: #e5efe9; color: #52796f; font-weight: 650; }
+.status-title, .status-copy { display: block; }
+.status-title { font-size: 29rpx; font-weight: 650; }
+.status-copy { margin-top: 6rpx; color: #7d8984; font-size: 22rpx; }
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24rpx; margin-top: 22rpx; padding-top: 8rpx; border-top: 1rpx solid #edf0ee; }
+.detail-grid view { min-width: 0; padding: 16rpx 0; }
+.detail-grid text { display: block; }
+.detail-grid text:first-child { color: #7d8984; font-size: 20rpx; }
+.detail-grid text:last-child { overflow: hidden; margin-top: 5rpx; color: #34443f; font-size: 24rpx; text-overflow: ellipsis; white-space: nowrap; }
+.load-simulator-button, .solo-test-button { width: 100%; min-height: 76rpx; margin: 22rpx 0 0; border-radius: 18rpx; background: #52796f !important; color: #fff !important; font-size: 27rpx; }
+.load-simulator-button::after, .solo-test-button::after { border: 0; }
+.disconnect-detail-button { width: 100%; min-height: 70rpx; margin: 14rpx 0 0; border-radius: 17rpx; background: #fff0ed !important; color: #a95549 !important; font-size: 25rpx; }
+.disconnect-detail-button::after { border: 0; }
+.section-head { display: flex; align-items: center; justify-content: space-between; margin: 38rpx 4rpx 16rpx; }
+.section-head text:first-child { font-size: 31rpx; font-weight: 650; }
+.section-head text:last-child { color: #8a9490; font-size: 22rpx; }
+.card-title { display: block; font-size: 29rpx; font-weight: 650; }
+.card-tip { display: block; margin-top: 8rpx; color: #71807b; font-size: 23rpx; line-height: 1.5; }
+.warning-tip { display: block; margin-top: 12rpx; color: #a06f43; font-size: 22rpx; text-align: center; }
+.token-row { display: flex; align-items: center; justify-content: space-between; gap: 18rpx; margin-top: 20rpx; padding: 20rpx; border-radius: 18rpx; background: #f3f7f4; }
+.token-row text { display: block; color: #71807b; font-size: 22rpx; }
+.token-row .token-value { margin-top: 5rpx; color: #2f3e3a; font-size: 31rpx; font-weight: 650; }
+.token-row button { width: 112rpx; min-width: 0; min-height: 62rpx; flex: 0 0 112rpx; margin: 0; padding: 0; border-radius: 15rpx; background: #e4efe8 !important; color: #52796f !important; font-size: 23rpx; }
+.dual-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 14rpx; margin-top: 16rpx; }
+.dual-actions button { width: 100%; min-height: 68rpx; margin: 0; border-radius: 16rpx; background: #edf3ef !important; color: #52796f !important; font-size: 24rpx; }
+.dual-actions .inject-button { background: #52796f !important; color: #fff !important; }
+.token-row button::after, .dual-actions button::after { border: 0; }
+.tool-list { padding: 0 28rpx; }
+.tool-item { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; min-height: 120rpx; border-bottom: 1rpx solid #edf0ee; }
+.tool-item:last-child { border-bottom: 0; }
+.tool-item.disabled { opacity: .45; }
+.tool-item view { flex: 1; }
+.tool-item view text { display: block; }
+.tool-item view text:first-child { font-size: 27rpx; font-weight: 600; }
+.tool-item view text:last-child { margin-top: 6rpx; color: #7d8984; font-size: 21rpx; }
+.tool-item > text { color: #98a29e; font-size: 43rpx; }
+.lab-footnote { display: block; margin: 28rpx 18rpx 0; color: #89938f; font-size: 22rpx; line-height: 1.55; text-align: center; }
+.load-simulator-button, .solo-test-button, .token-row button, .dual-actions button, .tool-item { transition: transform 140ms cubic-bezier(.23, 1, .32, 1); }
+.load-simulator-button:active, .solo-test-button:active, .token-row button:active, .dual-actions button:active, .tool-item:active { transform: scale(.97); }

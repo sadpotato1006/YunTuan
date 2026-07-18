@@ -1,10 +1,10 @@
 const STORAGE_KEY = "yuntuan_emotion_records";
 const DEFAULT_RECORDS = [];
 const EMOTION_OPTIONS = [
-  { name: "开心", score: 92, icon: "😊", defaultNote: "今天心情很好，想把这份快乐记下来。" },
-  { name: "平静", score: 82, icon: "🙂", defaultNote: "今天心里很安稳，平平淡淡也很好。" },
-  { name: "一般", score: 70, icon: "😐", defaultNote: "今天心情比较平常，慢慢照顾好自己。" },
-  { name: "有点低落", score: 55, icon: "😔", defaultNote: "今天有些不开心，希望明天会轻松一点。" }
+  { name: "开心", icon: "😊", defaultNote: "今天心情很好，想把这份快乐记下来。" },
+  { name: "平静", icon: "🙂", defaultNote: "今天心里很安稳，平平淡淡也很好。" },
+  { name: "一般", icon: "😐", defaultNote: "今天心情比较平常，慢慢照顾好自己。" },
+  { name: "有点低落", icon: "😔", defaultNote: "今天有些不开心，希望明天会轻松一点。" }
 ];
 
 function response(data, delay) {
@@ -45,18 +45,19 @@ function getEmotionSummary() {
 function addEmotionRecord(name, noteValue) {
   const option = EMOTION_OPTIONS.find(item => item.name === name);
   if (!option) return Promise.reject(new Error("请选择一种心情"));
-  const customNote = typeof noteValue === "string" ? noteValue.trim() : "";
-  if (Array.from(customNote).length > 100) return Promise.reject(new Error("心情备注不能超过 100 个字符"));
-  const note = customNote || option.defaultNote;
+  const normalizedNote = typeof noteValue === "string" ? noteValue.trim() : "";
+  if (Array.from(normalizedNote).length > 100) return Promise.reject(new Error("心情备注不能超过 100 个字符"));
+  const noteCustomized = Boolean(normalizedNote && normalizedNote !== option.defaultNote);
+  const note = noteCustomized ? normalizedNote : option.defaultNote;
 
   const today = formatDate(new Date());
   const record = {
     id: Date.now(),
     date: today,
     name: option.name,
-    score: option.score,
+    icon: option.icon,
     note,
-    noteCustomized: Boolean(customNote)
+    noteCustomized
   };
   // 每天保留一条主动记录，再次选择会更新当天心情。
   const records = [record].concat(readRecords().filter(item => item.date !== today));

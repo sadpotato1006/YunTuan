@@ -1,57 +1,72 @@
-.device-card { text-align: center; padding: 48rpx 36rpx; }
-.device-owner-avatar { width: 132rpx; height: 132rpx; margin: 0 auto 22rpx; border-radius: 50%; }
-.virtual-owner-avatar { display: flex; align-items: center; justify-content: center; font-size: 58rpx; }
-.owner-nickname { word-break: break-all; }
-.device-name { display: block; margin-top: 8rpx; color: #7b8883; font-size: 26rpx; }
-.connection { margin: 14rpx 0 30rpx; color: #999; }
-.connection.connected { color: #5c9968; }
-.battery-wrap { width: 80%; height: 24rpx; margin: auto; background: #e8ece9; border-radius: 20rpx; overflow: hidden; }
-.battery-fill { height: 100%; background: #77a47b; border-radius: 20rpx; }
-.battery-text { display: block; margin-top: 14rpx; color: #60706b; }
-.low-battery { display: block; margin-top: 12rpx; color: #bd6757; font-size: 28rpx; }
-.protocol-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 12rpx; margin-top: 24rpx; }
-.protocol-tags text { padding: 8rpx 16rpx; border-radius: 18rpx; background: #edf3ef; color: #52796f; font-size: 24rpx; }
-.error-text { display: block; margin-top: 18rpx; color: #bd6757; font-size: 27rpx; }
-.event-text { display: block; margin-top: 16rpx; color: #52796f; font-size: 27rpx; }
-.device-info-card { padding-top: 10rpx; padding-bottom: 10rpx; }
-.info-row { display: flex; justify-content: space-between; gap: 24rpx; padding: 22rpx 0; border-bottom: 1rpx solid #edf0ee; font-size: 29rpx; }
-.info-row:last-child { border-bottom: 0; }
-.info-row text:first-child { color: #71807b; }
-.info-row text:last-child { text-align: right; word-break: break-all; }
-.setting-row { display: flex; justify-content: space-between; align-items: center; }
-.setting-row .section-title { margin-bottom: 8rpx; }
-.encounter-card { display: flex; align-items: flex-start; gap: 20rpx; text-align: left; }
-.encounter-icon { width: 72rpx; height: 72rpx; flex: 0 0 72rpx; border-radius: 50%; background: #fff1cf; color: #9a722b; display: flex; align-items: center; justify-content: center; font-weight: 600; }
-.encounter-avatar { width: 92rpx; height: 92rpx; flex: 0 0 92rpx; border-radius: 50%; }
-.virtual-encounter-avatar { display: flex; align-items: center; justify-content: center; font-size: 42rpx; }
-.encounter-content { flex: 1; min-width: 0; }
-.encounter-content .section-title { margin-bottom: 8rpx; }
-.encounter-name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10rpx; }
-.encounter-name { font-size: 32rpx; font-weight: 600; }
-.encounter-intention { padding: 5rpx 11rpx; border-radius: 15rpx; background: #e4efe8; color: #52796f; font-size: 21rpx; }
-.encounter-bio { display: block; margin-top: 9rpx; color: #60706b; font-size: 26rpx; line-height: 1.5; }
-.encounter-tags { display: flex; flex-wrap: wrap; gap: 9rpx; margin-top: 12rpx; }
-.encounter-tags text { padding: 5rpx 10rpx; border-radius: 15rpx; background: #f4f1e9; color: #756b54; font-size: 21rpx; }
-.encounter-meta { display: block; margin-top: 12rpx; color: #89938f; font-size: 22rpx; }
-.encounter-count-wrap { align-self: flex-start; }
-.encounter-count { color: #52796f; font-size: 26rpx; white-space: nowrap; }
-.scan-actions { display: flex; flex-direction: column; gap: 18rpx; margin-bottom: 34rpx; }
-.scan-btn { width: 100%; margin: 0; }
-.simulator-btn { width: 100%; min-height: 82rpx; margin: 0; border-radius: 20rpx; background: #fff8e8 !important; color: #8b6b2e !important; font-size: 29rpx; }
-.simulator-btn::after { border-color: #ead9b2; }
-.nearby-title { margin-top: 8rpx; }
-.nearby-device { display: flex; align-items: center; gap: 20rpx; }
+.device-page { padding-bottom: calc(64rpx + env(safe-area-inset-bottom)); }
+.page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24rpx; margin: 8rpx 4rpx 28rpx; }
+.page-subtitle { display: block; margin-top: 8rpx; color: #71807b; font-size: 24rpx; }
+.device-state-pill { display: flex; align-items: center; gap: 9rpx; flex: none; margin-top: 9rpx; padding: 10rpx 16rpx; border-radius: 999rpx; background: #ecefed; color: #7c8783; font-size: 22rpx; }
+.device-state-pill.online { background: #e2efe7; color: #426d61; }
+.state-dot { width: 12rpx; height: 12rpx; border-radius: 50%; background: #9aa39f; }
+.online .state-dot { background: #5d9a6d; }
+.device-summary-card { padding: 28rpx; }
+.owner-row { display: flex; align-items: center; gap: 18rpx; }
+.device-owner-avatar { width: 86rpx; height: 86rpx; flex: 0 0 86rpx; border-radius: 50%; }
+.virtual-owner-avatar { display: flex; align-items: center; justify-content: center; font-size: 39rpx; }
+.owner-copy { flex: 1; min-width: 0; }
+.owner-nickname { display: block; overflow: hidden; font-size: 31rpx; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.device-name { display: block; margin-top: 6rpx; color: #71807b; font-size: 23rpx; }
+.battery-number { color: #52796f; font-size: 34rpx; font-weight: 650; }
+.connection-line { margin-top: 22rpx; color: #8a9490; font-size: 24rpx; }
+.connection-line.connected { color: #52796f; }
+.battery-wrap { height: 14rpx; margin-top: 16rpx; overflow: hidden; border-radius: 999rpx; background: #e8ece9; }
+.battery-fill { height: 100%; border-radius: 999rpx; background: #77a47b; }
+.low-battery, .error-text { display: block; margin-top: 12rpx; color: #b85f51; font-size: 23rpx; }
+.connection-actions { display: flex; flex-direction: column; gap: 16rpx; }
+.connection-actions button { width: 100%; margin: 0; }
+.device-details-entry { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; margin-top: 4rpx; padding: 22rpx 24rpx; border-radius: 20rpx; background: #fff8e8; color: #695a3c; }
+.device-details-entry text { display: block; }
+.device-details-entry view { flex: 1; min-width: 0; }
+.device-details-entry view text:first-child { font-size: 27rpx; font-weight: 650; }
+.device-details-entry view text:last-child { margin-top: 5rpx; color: #8d7c5b; font-size: 21rpx; }
+.connected-entry { margin-top: 0; background: #fff; color: #2f3e3a; }
+.connected-entry view text:last-child { color: #7d8984; }
+.entry-arrow { font-size: 46rpx; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; margin: 38rpx 4rpx 16rpx; }
+.section-head > text:first-child { font-size: 31rpx; font-weight: 650; }
+.section-head > text:last-child { color: #87928e; font-size: 23rpx; }
+.section-link { color: #52796f !important; }
+.compact-empty { padding: 42rpx 20rpx; }
+.nearby-device { display: flex; align-items: center; gap: 20rpx; padding: 24rpx; }
 .nearby-info { flex: 1; min-width: 0; }
 .nearby-name, .nearby-id, .nearby-rssi { display: block; }
-.nearby-name { font-weight: 600; }
-.nearby-id { margin-top: 8rpx; color: #87938f; font-size: 23rpx; word-break: break-all; }
-.nearby-rssi { margin-top: 8rpx; color: #71807b; font-size: 26rpx; }
-.connect-btn { width: 142rpx; min-height: 76rpx; margin: 0; padding: 0; border-radius: 18rpx; background: #52796f !important; color: #fff !important; font-size: 29rpx; }
+.nearby-name { font-weight: 650; }
+.nearby-id, .nearby-rssi { margin-top: 7rpx; color: #7e8a85; font-size: 23rpx; word-break: break-all; }
+.connect-btn { width: 138rpx; min-width: 0; min-height: 70rpx; flex: 0 0 138rpx; margin: 0; padding: 0; border-radius: 17rpx; background: #52796f !important; color: #fff !important; font-size: 27rpx; line-height: 70rpx; }
 .connect-btn::after { border: 0; }
-.device-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 18rpx; margin-bottom: 22rpx; }
-.device-actions button { width: 100%; margin: 0; font-size: 29rpx; }
-.disconnect-btn { min-height: 84rpx; border-radius: 20rpx; background: #fff0ed !important; color: #a95549 !important; font-size: 30rpx; }
-.disconnect-btn::after { border-color: #e7c3bc; }
-.debug-btn { min-height: 84rpx; margin-top: 22rpx; border-radius: 20rpx; background: #fff !important; color: #52796f !important; font-size: 29rpx; }
-.debug-btn::after { border-color: #b8c9c3; }
-.ble-tip { text-align: center; color: #89938f; font-size: 27rpx; margin-top: 18rpx; }
+.core-controls-card { padding: 0 28rpx 26rpx; }
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 24rpx; min-height: 122rpx; border-bottom: 1rpx solid #edf0ee; }
+.control-title { display: block; font-size: 29rpx; font-weight: 650; }
+.control-tip { display: block; margin-top: 7rpx; color: #7d8984; font-size: 22rpx; line-height: 1.45; }
+.find-device-button { width: 100%; min-height: 72rpx; margin: 24rpx 0 0; border-radius: 17rpx; background: #e7efe9 !important; color: #365f55 !important; font-size: 26rpx; line-height: 72rpx; }
+.find-device-button::after { border: 0; }
+.encounter-card { padding: 26rpx; }
+.encounter-profile-row, .encounter-loading-row { display: flex; align-items: flex-start; gap: 18rpx; }
+.encounter-avatar { width: 88rpx; height: 88rpx; flex: 0 0 88rpx; border-radius: 50%; }
+.virtual-encounter-avatar { display: flex; align-items: center; justify-content: center; font-size: 39rpx; }
+.encounter-icon { width: 72rpx; height: 72rpx; flex: 0 0 72rpx; border-radius: 50%; background: #fff1cf; color: #9a722b; display: flex; align-items: center; justify-content: center; font-weight: 650; }
+.encounter-content { flex: 1; min-width: 0; }
+.encounter-name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10rpx; }
+.encounter-name { font-size: 30rpx; font-weight: 650; }
+.encounter-intention { padding: 5rpx 11rpx; border-radius: 15rpx; background: #e4efe8; color: #52796f; font-size: 20rpx; }
+.encounter-bio { display: block; margin-top: 8rpx; color: #60706b; font-size: 24rpx; line-height: 1.45; }
+.encounter-tags { display: flex; flex-wrap: wrap; gap: 8rpx; margin-top: 11rpx; }
+.encounter-tags text { padding: 5rpx 10rpx; border-radius: 14rpx; background: #f4f1e9; color: #756b54; font-size: 20rpx; }
+.encounter-meta { display: block; margin-top: 18rpx; color: #89938f; font-size: 21rpx; }
+.encounter-actions { display: flex; align-items: center; gap: 12rpx; margin-top: 20rpx; padding-top: 18rpx; border-top: 1rpx solid #edf0ee; }
+.encounter-actions button { min-height: 66rpx; margin: 0; border-radius: 16rpx; font-size: 24rpx; line-height: 66rpx; }
+.greet-button { flex: 1.35; background: #52796f !important; color: #fff !important; }
+.view-encounters-button { flex: 1; background: #edf3ef !important; color: #52796f !important; }
+.encounter-actions button::after { border: 0; }
+.greeting-state { flex: 1.35; color: #8b7345; font-size: 23rpx; }
+.greeting-state.matched { color: #52796f; font-weight: 650; }
+.encounter-retry { width: 100%; min-height: 64rpx; margin: 18rpx 0 0; border-radius: 16rpx; background: #edf3ef !important; color: #52796f !important; font-size: 23rpx; }
+.encounter-retry::after { border: 0; }
+.device-details-entry:active, .find-device-button:active, .connect-btn:active, .greet-button:active, .view-encounters-button:active { transform: scale(.97); }
+.device-details-entry, .find-device-button, .connect-btn, .greet-button, .view-encounters-button { transition: transform 140ms cubic-bezier(.23, 1, .32, 1); }

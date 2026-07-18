@@ -11,6 +11,7 @@ const MAX_CONTEXT_CHARACTERS = 4000;
 const MAX_MESSAGE_CHARACTERS = 500;
 const MAX_SPEECH_CHARACTERS = 150;
 const SPEECH_SEGMENT_CHARACTERS = 40;
+const SPEECH_PROTECTION_RETRY_DELAYS_MS = [150, 400];
 const SAVE_DEBOUNCE_MS = 600;
 let pendingMessages = null;
 let saveTimer = null;
@@ -320,17 +321,17 @@ function getRealtimeAsrTicket() {
   return callCloudFunction("chat", { action: "realtimeAsrTicket" });
 }
 
-function synthesizeSpeech(text) {
+async function synthesizeSpeech(text) {
   const content = typeof text === "string" ? text.trim() : "";
   if (!content) return Promise.reject(new Error("没有可朗读的文字"));
   const mode = config.getBackendMode("chat");
   if (mode !== "cloud") {
     return Promise.reject(new Error("语音合成需要启用云开发模式"));
   }
-  return callCloudFunction("chat", { action: "synthesize", text: content });
+  return callSpeechFunctionWithRetry({ action: "synthesize", text: content });
 }
 
-function synthesizeSpeechBatch(texts) {
+async function synthesizeSpeechBatch(texts) {
   const normalized = Array.isArray(texts)
     ? texts.map(item => typeof item === "string" ? item.trim() : "").filter(Boolean)
     : [];
@@ -338,7 +339,33 @@ function synthesizeSpeechBatch(texts) {
   if (normalized.length > 3) return Promise.reject(new Error("一次最多预生成三段朗读语音"));
   const mode = config.getBackendMode("chat");
   if (mode !== "cloud") return Promise.reject(new Error("语音合成需要启用云开发模式"));
-  return callCloudFunction("chat", { action: "synthesizeBatch", texts: normalized });
+  return callSpeechFunctionWithRetry({ action: "synthesizeBatch", texts: normalized });
+}
+
+async function callSpeechFunctionWithRetry(data) {
+  let retryIndex = 0;
+  while (true) {
+    try {
+      return await callCloudFunction("chat", data);
+    } catch (error) {
+      if (!isTransientSpeechProtectionError(error) ||
+          retryIndex >= SPEECH_PROTECTION_RETRY_DELAYS_MS.length) {
+        throw error;
+      }
+      const delay = SPEECH_PROTECTION_RETRY_DELAYS_MS[retryIndex];
+      retryIndex += 1;
+      console.warn(`语音合成保护事务冲突，${delay}ms 后重试（${retryIndex}/${SPEECH_PROTECTION_RETRY_DELAYS_MS.length}）`);
+      await wait(delay);
+    }
+  }
+}
+
+function isTransientSpeechProtectionError(error) {
+  return String(error && error.message || "").includes("聊天保护服务暂时不可用");
+}
+
+function wait(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
 function splitSpeechText(text) {

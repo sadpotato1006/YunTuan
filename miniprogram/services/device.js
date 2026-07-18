@@ -45,15 +45,32 @@ function setSocialMode(enabled) {
     { enabled }
   );
 }
+function setAlertSettings(settings) {
+  return invoke(
+    "setAlertSettings",
+    () => Promise.resolve({ code: 0, message: "success", data: { settings } }),
+    () => bleDevice.setAlertSettings(settings),
+    { url: "/device/alert-settings", method: "PUT", data: settings },
+    { settings }
+  );
+}
 
 function initialize() { return bleDevice.initialize(); }
 function startScan() { return bleDevice.startScan(); }
 function stopScan() { return bleDevice.stopScan(); }
 function loadSimulator() { return bleDevice.loadSimulator(); }
+function simulateSocialEncounter(peerToken, rssi) {
+  return bleDevice.simulateSocialEncounter(peerToken, rssi);
+}
 function reconnectLastDevice() { return bleDevice.reconnectLastDevice(false); }
-function findDevice() { return bleDevice.findDevice(2, 1800); }
+function findDevice() { return bleDevice.findDevice(undefined, 1800); }
 function ping() { return bleDevice.ping(); }
 function refreshStatus() { return bleDevice.getStatus(); }
+function refreshSocialRegistration() { return bleDevice.refreshSocialRegistration(false); }
+function retryLastEncounterProfile() { return bleDevice.retryLastEncounterProfile(); }
+function retryEncounterProfile(encounterId) { return bleDevice.retryEncounterProfile(encounterId); }
+function getEncounterRecords() { return bleDevice.getEncounterRecords(); }
+function clearLocalPrivateState() { return bleDevice.clearLocalPrivateState(); }
 function subscribe(listener) { return bleDevice.subscribe(listener); }
 
 module.exports = {
@@ -62,13 +79,20 @@ module.exports = {
   bindDevice,
   disconnectDevice,
   setSocialMode,
+  setAlertSettings,
   initialize,
   startScan,
   stopScan,
   loadSimulator,
+  simulateSocialEncounter,
   reconnectLastDevice,
   findDevice,
   ping,
   refreshStatus,
+  refreshSocialRegistration,
+  retryLastEncounterProfile,
+  retryEncounterProfile,
+  getEncounterRecords,
+  clearLocalPrivateState,
   subscribe
 };

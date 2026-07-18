@@ -1,0 +1,73 @@
+<view class="page partners-page tab-swipe-page" style="{{tabSwipeStyle}}" bindtouchstart="onTabSwipeStart" bindtouchmove="onTabSwipeMove" bindtouchend="onTabSwipeEnd" bindtouchcancel="onTabSwipeCancel">
+  <view class="page-heading">
+    <text class="page-tip">朋友消息和收到的招呼都集中在这里</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="loading">正在获取伙伴消息…</view>
+  <block wx:else>
+    <view class="conversation-list card">
+      <view class="list-section-head" data-section="friends" bindtap="toggleSection">
+        <view class="section-title-wrap">
+          <text class="list-section-title">朋友</text>
+          <text class="section-count">{{matches.length}}</text>
+        </view>
+        <text class="section-toggle">{{friendsExpanded ? '收起' : '展开'}} {{friendsExpanded ? '⌃' : '⌄'}}</text>
+      </view>
+
+      <block wx:if="{{friendsExpanded}}">
+        <view wx:for="{{matches}}" wx:key="conversationId" class="conversation-row" data-id="{{item.conversationId}}" bindtap="openConversation">
+          <image wx:if="{{item.profile.avatarType === 'custom'}}" class="conversation-avatar" src="{{item.profile.avatarValue}}" mode="aspectFill" />
+          <view wx:else class="conversation-avatar virtual-avatar" style="background: {{item.profile.avatarColor}}">{{item.profile.avatarValue}}</view>
+          <view class="conversation-main">
+            <view class="conversation-title-row">
+              <text class="conversation-name">{{item.profile.nickname}}</text>
+              <text class="conversation-time">{{item.timeText}}</text>
+            </view>
+            <text class="conversation-summary {{item.newMatch ? 'accepted-summary' : ''}}">{{item.summary}}</text>
+          </view>
+          <text wx:if="{{item.hasNotice}}" class="notice-dot"></text>
+        </view>
+        <view wx:if="{{!matches.length}}" class="inline-empty">还没有认识的朋友</view>
+        <button wx:if="{{friendHasMore}}" class="load-more-button" data-section="friends" loading="{{loadingMoreSection === 'friends'}}" disabled="{{loadingMoreSection}}" bindtap="loadMore">加载更多朋友</button>
+      </block>
+
+      <view class="list-section-head greeting-section-head" data-section="greetings" bindtap="toggleSection">
+        <view class="section-title-wrap">
+          <text class="list-section-title">招呼</text>
+          <text class="section-count">{{greetings.length}}</text>
+          <text wx:if="{{greetings.length}}" class="notice-dot section-notice-dot"></text>
+        </view>
+        <text class="section-toggle">{{greetingsExpanded ? '收起' : '展开'}} {{greetingsExpanded ? '⌃' : '⌄'}}</text>
+      </view>
+
+      <block wx:if="{{greetingsExpanded}}">
+        <view wx:for="{{greetings}}" wx:key="greetingId" class="conversation-row greeting-row">
+          <image wx:if="{{item.profile.avatarType === 'custom'}}" class="conversation-avatar" src="{{item.profile.avatarValue}}" mode="aspectFill" />
+          <view wx:else class="conversation-avatar virtual-avatar" style="background: {{item.profile.avatarColor}}">{{item.profile.avatarValue}}</view>
+          <view class="conversation-main">
+            <view class="conversation-title-row">
+              <text class="conversation-name">{{item.profile.nickname}}</text>
+              <text class="conversation-time">{{item.timeText}}</text>
+            </view>
+            <text class="conversation-summary greeting-summary">向你打了招呼{{item.profile.bio ? ' · ' + item.profile.bio : ''}}</text>
+            <view class="greeting-actions">
+              <button data-id="{{item.greetingId}}" data-accept="false" disabled="{{operatingId}}" catchtap="respondGreeting">暂不认识</button>
+              <button class="accept-greeting" data-id="{{item.greetingId}}" data-accept="true" loading="{{operatingId === item.greetingId}}" disabled="{{operatingId}}" catchtap="respondGreeting">认识 TA</button>
+            </view>
+          </view>
+        </view>
+        <view wx:if="{{!greetings.length}}" class="inline-empty greeting-empty">暂时没有新的招呼</view>
+        <button wx:if="{{greetingHasMore}}" class="load-more-button" data-section="greetings" loading="{{loadingMoreSection === 'greetings'}}" disabled="{{loadingMoreSection}}" bindtap="loadMore">加载更多招呼</button>
+      </block>
+    </view>
+
+    <view wx:if="{{blockedUsers.length}}" class="blocked-manager">
+      <view class="blocked-toggle" bindtap="toggleBlocked"><text>已屏蔽 {{blockedUsers.length}} 人</text><text>{{showBlocked ? '收起' : '管理'}} ›</text></view>
+      <view wx:if="{{showBlocked}}" wx:for="{{blockedUsers}}" wx:key="blockId" class="blocked-card card">
+        <block wx:if="{{item.profile}}"><profile-card-item profile="{{item.profile}}"></profile-card-item></block>
+        <text wx:else class="blocked-name">已注销名片的用户</text>
+        <view class="blocked-footer"><text class="time">{{item.timeText}} 屏蔽</text><button data-id="{{item.blockId}}" loading="{{operatingId === item.blockId}}" disabled="{{operatingId}}" bindtap="unblock">解除屏蔽</button></view>
+      </view>
+    </view>
+  </block>
+</view>

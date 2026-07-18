@@ -1,13 +1,14 @@
-<view class="page">
+<view class="page tab-swipe-page" style="{{tabSwipeStyle}}" bindtouchstart="onTabSwipeStart" bindtouchmove="onTabSwipeMove" bindtouchend="onTabSwipeEnd" bindtouchcancel="onTabSwipeCancel">
   <view wx:if="{{loading}}" class="loading">正在准备今日信息…</view>
   <block wx:else>
     <view class="hero card">
       <text class="eyebrow">云团陪伴</text>
       <view class="title">{{greeting}}</view>
-      <view class="device-row">
+      <view class="device-row" bindtap="goDevice">
         <text class="status-dot {{device.connected ? 'online' : ''}}"></text>
         <text>{{device.connected ? '设备已连接' : '设备未连接'}}</text>
         <text class="battery">电量 {{device.battery === null ? '--' : device.battery}}%</text>
+        <text class="row-arrow">›</text>
       </view>
     </view>
     <button class="primary-btn chat-btn" bindtap="startChat">开始陪伴对话</button>
@@ -20,12 +21,7 @@
         <view class="section-title">最近心情</view>
         <text class="muted">{{latestEmotion.date}}<text wx:if="{{latestEmotion.note}}"> · {{latestEmotion.note}}</text></text>
       </view>
-      <view class="mood-score"><text>{{latestEmotion.name}}</text><text>{{latestEmotion.score}} 分</text></view>
-    </view>
-    <view class="quick-grid">
-      <view class="quick-item" bindtap="goDevice"><text class="quick-icon">⌁</text><text>我的设备</text></view>
-      <view class="quick-item" bindtap="goEmotion"><text class="quick-icon">♡</text><text>情绪记录</text></view>
-      <view class="quick-item" bindtap="goSettings"><text class="quick-icon">⚙</text><text>应用设置</text></view>
+      <view class="mood-summary"><text class="mood-icon">{{latestEmotion.icon || '♡'}}</text><text>{{latestEmotion.name}}</text></view>
     </view>
   </block>
 </view>

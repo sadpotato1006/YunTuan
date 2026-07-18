@@ -1,0 +1,10 @@
+.profile-row { display: flex; align-items: flex-start; gap: 20rpx; }
+.avatar { width: 88rpx; height: 88rpx; flex: 0 0 88rpx; border-radius: 50%; }
+.virtual-avatar { display: flex; align-items: center; justify-content: center; font-size: 40rpx; }
+.main { flex: 1; min-width: 0; }
+.name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10rpx; }
+.name { font-size: 31rpx; font-weight: 650; }
+.intention { padding: 5rpx 11rpx; border-radius: 15rpx; background: #e4efe8; color: #52796f; font-size: 21rpx; }
+.bio { display: block; margin-top: 8rpx; color: #60706b; font-size: 25rpx; line-height: 1.5; }
+.tags { display: flex; flex-wrap: wrap; gap: 9rpx; margin-top: 11rpx; }
+.tags text { padding: 5rpx 10rpx; border-radius: 15rpx; background: #f4f1e9; color: #756b54; font-size: 21rpx; }

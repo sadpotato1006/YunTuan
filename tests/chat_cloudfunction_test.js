@@ -4,6 +4,7 @@ const Module = require("module");
 
 const documents = new Map();
 const aiRequests = [];
+const transactionRetryTimes = [];
 let currentOpenid = "openid-user-1";
 let safetySuggestion = "pass";
 let safetyCalls = 0;
@@ -21,6 +22,10 @@ function createDocument(id) {
     },
     async set(options) {
       documents.set(id, Object.assign({ _id: id }, clone(options.data)));
+      return {};
+    },
+    async remove() {
+      documents.delete(id);
       return {};
     }
   };
@@ -56,7 +61,8 @@ const database = {
   collection() {
     return createCollection();
   },
-  async runTransaction(callback) {
+  async runTransaction(callback, retryTimes) {
+    transactionRetryTimes.push(retryTimes);
     return callback({ collection: () => createCollection() });
   }
 };
@@ -189,6 +195,17 @@ Module._load = originalLoad;
   assert.strictEqual(batch.code, 0);
   assert.strictEqual(batch.data.segments.length, 2);
   assert.ok(batch.data.segments.every(segment => segment.audioBase64 && segment.codec === "ima-adpcm"));
+  const oldSharedKey = crypto.createHash("sha256").update(currentOpenid).digest("hex");
+  const synthesizeUsageKey = crypto.createHash("sha256")
+    .update(`${currentOpenid}:synthesize`)
+    .digest("hex");
+  assert.strictEqual(documents.has(oldSharedKey), false);
+  assert.strictEqual(documents.has(synthesizeUsageKey), true);
+  assert.ok(transactionRetryTimes.includes(6));
+
+  const deletedChatData = await chatFunction.main({ action: "deleteMyChatData" });
+  assert.strictEqual(deletedChatData.code, 0);
+  assert.strictEqual(documents.has(synthesizeUsageKey), false);
 
   currentOpenid = "openid-user-5";
   process.env.CHAT_DAILY_ASR_QUOTA = "10";

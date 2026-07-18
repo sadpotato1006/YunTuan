@@ -5,7 +5,7 @@
 .current-avatar, .preview-avatar { width: 128rpx; height: 128rpx; flex: 0 0 128rpx; border-radius: 50%; }
 .virtual-avatar { display: flex; align-items: center; justify-content: center; font-size: 58rpx; }
 .choose-avatar-btn { flex: 1; min-height: 78rpx; margin: 0; border-radius: 18rpx; background: #e7efe9 !important; color: #365f55 !important; font-size: 29rpx; }
-.choose-avatar-btn::after, .add-tag-btn::after, .greeting-btn::after { border: 0; }
+.choose-avatar-btn::after, .add-tag-btn::after { border: 0; }
 .field-tip { display: block; margin: 18rpx 0 14rpx; color: #83908b; font-size: 25rpx; }
 .avatar-options { display: flex; flex-wrap: wrap; gap: 16rpx; }
 .avatar-option { width: 72rpx; height: 72rpx; border: 4rpx solid transparent; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 36rpx; box-sizing: border-box; }
@@ -31,6 +31,19 @@
 .intention-label { font-size: 29rpx; font-weight: 600; }
 .intention-description { margin-top: 7rpx; color: #7b8883; font-size: 24rpx; }
 .radio-dot { color: #52796f; font-size: 34rpx; }
+.private-contact-card { overflow: hidden; }
+.contact-add-row { display: flex; gap: 12rpx; margin-top: 20rpx; }
+.contact-add-row button { min-width: 0; min-height: 66rpx; flex: 1; margin: 0; padding: 0 8rpx; border-radius: 15rpx; background: #e7efe9 !important; color: #41675e !important; font-size: 23rpx; line-height: 66rpx; }
+.contact-add-row button::after, .contact-option-head button::after, .contact-qr-editor button::after { border: 0; }
+.contact-empty { margin-top: 22rpx; padding: 28rpx 18rpx; border-radius: 16rpx; background: #f7f8f7; color: #929c98; font-size: 24rpx; text-align: center; }
+.contact-option-editor { margin-top: 22rpx; padding: 22rpx; border: 1rpx solid #e3e9e5; border-radius: 18rpx; background: #fafbfa; }
+.contact-option-head { display: flex; align-items: center; justify-content: space-between; color: #50615b; font-size: 25rpx; font-weight: 650; }
+.contact-option-head button { width: auto; min-height: 46rpx; margin: 0; padding: 0 10rpx; background: transparent !important; color: #b6675b !important; font-size: 22rpx; line-height: 46rpx; }
+.contact-label-input, .contact-value-input { width: 100%; height: 76rpx; margin-top: 14rpx; font-size: 26rpx; }
+.contact-qr-editor { display: flex; align-items: center; gap: 18rpx; margin-top: 16rpx; }
+.contact-qr-editor image, .contact-qr-placeholder { width: 120rpx; height: 120rpx; flex: 0 0 120rpx; border-radius: 14rpx; }
+.contact-qr-placeholder { display: flex; align-items: center; justify-content: center; background: #edf2ef; color: #97a29d; font-size: 23rpx; }
+.contact-qr-editor button { min-height: 66rpx; flex: 1; margin: 0; border-radius: 15rpx; background: #edf3ef !important; color: #52796f !important; font-size: 24rpx; line-height: 66rpx; }
 .save-btn { width: 100%; margin: 6rpx 0 38rpx; }
 .preview-title { margin: 0 4rpx 18rpx; font-size: 30rpx; font-weight: 600; color: #56645f; }
 .profile-preview { display: flex; align-items: flex-start; gap: 24rpx; }
@@ -43,5 +56,4 @@
 .preview-tags { margin-top: 16rpx; }
 .preview-tags text { padding: 7rpx 13rpx; border-radius: 18rpx; background: #f4f1e9; color: #756b54; font-size: 23rpx; }
 .preview-empty-tags { display: block; margin-top: 14rpx; color: #9aa39f; font-size: 24rpx; }
-.greeting-btn { min-height: 72rpx; margin: 22rpx 0 0; border-radius: 18rpx; background: #52796f !important; color: #fff !important; font-size: 28rpx; }
-.greeting-btn.sent, .greeting-btn[disabled] { background: #dfe6e2 !important; color: #77847f !important; }
+.preview-privacy-tip { display: block; margin-top: 18rpx; color: #89938f; font-size: 23rpx; }

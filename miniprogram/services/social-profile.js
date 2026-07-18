@@ -9,6 +9,7 @@ const DEFAULT_PROFILE = Object.freeze({
   bio: "很高兴在云团遇见你",
   tags: [],
   intention: "chat",
+  contactOptions: [],
   updatedAt: 0
 });
 
@@ -24,6 +25,39 @@ function normalizeText(value, maxLength) {
 
 function normalizeFileValue(value) {
   return String(value || "").trim().slice(0, 512);
+}
+
+function createContactOptionId() {
+  const random = Math.random().toString(36).slice(2, 10);
+  return `contact_${Date.now().toString(36)}_${random}`;
+}
+
+function normalizeContactOptions(value) {
+  return (Array.isArray(value) ? value : []).slice(0, 8).map(item => {
+    const source = item && typeof item === "object" ? item : {};
+    const type = ["wechat", "phone", "qr"].includes(source.type) ? source.type : "wechat";
+    const defaultLabel = type === "wechat" ? "微信号" : (type === "phone" ? "手机号" : "联系二维码");
+    const id = /^[A-Za-z0-9_-]{8,64}$/.test(source.id || "")
+      ? source.id
+      : createContactOptionId();
+    const option = {
+      id,
+      type,
+      label: normalizeText(source.label, 12) || defaultLabel
+    };
+    if (type === "qr") {
+      option.qrCodeFileId = normalizeFileValue(source.qrCodeFileId);
+      option.localPath = normalizeFileValue(source.localPath);
+    } else {
+      option.value = String(source.value || "").trim().slice(0, type === "wechat" ? 32 : 20);
+    }
+    return option;
+  });
+}
+
+function createContactOption(typeValue) {
+  const type = ["wechat", "phone", "qr"].includes(typeValue) ? typeValue : "wechat";
+  return normalizeContactOptions([{ id: createContactOptionId(), type }])[0];
 }
 
 function normalizeProfile(value) {
@@ -45,6 +79,7 @@ function normalizeProfile(value) {
     bio: normalizeText(source.bio, 60) || DEFAULT_PROFILE.bio,
     tags,
     intention,
+    contactOptions: normalizeContactOptions(source.contactOptions),
     updatedAt: Number.isFinite(source.updatedAt) ? source.updatedAt : 0
   };
 }
@@ -77,7 +112,18 @@ function saveProfile(value) {
   return profile;
 }
 
-// Only these fields may be sent when the anonymous encounter lookup is added.
+function fromCloudProfile(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const cloudAvatar = source.avatarType === "custom"
+    ? normalizeFileValue(source.avatarValue)
+    : "";
+  return normalizeProfile(Object.assign({}, source, {
+    avatarCloudFileId: cloudAvatar,
+    updatedAt: Date.now()
+  }));
+}
+
+// 只返回相遇时允许公开的字段，避免本地后续新增的私密字段被意外带出。
 function toPublicCard(value) {
   const profile = normalizeProfile(value);
   return {
@@ -97,8 +143,11 @@ module.exports = {
   DEFAULT_PROFILE,
   INTENTION_LABELS,
   normalizeProfile,
+  normalizeContactOptions,
+  createContactOption,
   getProfile,
   saveProfile,
+  fromCloudProfile,
   toCloudProfile,
   toPublicCard
 };

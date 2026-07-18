@@ -195,7 +195,7 @@ function buildSetSocialModePayload(enabled) {
 }
 
 function buildFindDevicePayload(alertType, duration) {
-  if (![0, 1, 2].includes(alertType)) throw new Error("AlertType 只能为 0、1 或 2");
+  if (![0, 1, 2, 3].includes(alertType)) throw new Error("AlertType 只能为 0、1、2 或 3");
   if (!Number.isInteger(duration) || duration < 500 || duration > 10000) {
     throw new Error("查找设备时长必须为 500～10000 毫秒");
   }
@@ -205,12 +205,52 @@ function buildFindDevicePayload(alertType, duration) {
   return payload;
 }
 
+function buildAlertSettingsPayload(value) {
+  const settings = value && typeof value === "object" ? value : {};
+  return new Uint8Array([
+    settings.socialReminder === false ? 0 : 1,
+    settings.vibration === false ? 0 : 1,
+    settings.sound === false ? 0 : 1
+  ]);
+}
+
+function parseAlertSettingsData(value) {
+  const bytes = toBytes(value);
+  if (bytes.length !== 3) throw new Error("SET_ALERT_SETTINGS 响应数据必须为 3 字节");
+  return {
+    socialReminder: parseBoolean(bytes[0], "SocialReminder"),
+    vibration: parseBoolean(bytes[1], "Vibration"),
+    sound: parseBoolean(bytes[2], "Sound")
+  };
+}
+
 function buildUint32Payload(value) {
   if (!Number.isInteger(value) || value < 0 || value > 0xFFFFFFFF) {
     throw new Error("数值必须为 uint32");
   }
   const payload = new Uint8Array(4);
   writeUint32LE(payload, 0, value);
+  return payload;
+}
+
+function encounterIdFromBytes(value, offset) {
+  const bytes = toBytes(value);
+  const start = offset || 0;
+  requireLength(bytes, start, 8);
+  let result = "";
+  for (let index = start; index < start + 8; index += 1) {
+    result += bytes[index].toString(16).padStart(2, "0");
+  }
+  return result.toUpperCase();
+}
+
+function buildEncounterAckPayload(encounterId) {
+  const normalized = String(encounterId || "").trim().toUpperCase();
+  if (!/^[0-9A-F]{16}$/.test(normalized)) throw new Error("相遇事件编号格式不正确");
+  const payload = new Uint8Array(8);
+  for (let index = 0; index < payload.length; index += 1) {
+    payload[index] = parseInt(normalized.slice(index * 2, index * 2 + 2), 16);
+  }
   return payload;
 }
 
@@ -242,13 +282,17 @@ function parseEvent(frameOrValue) {
     return { type: "bindWindowChanged", command: frame.command, bindState: bytes[0] };
   }
   if (frame.command === config.COMMANDS.SOCIAL_ENCOUNTER) {
-    if (bytes.length !== 9) throw new Error("SOCIAL_ENCOUNTER 必须为 9 字节");
+    if (bytes.length !== 18) throw new Error("SOCIAL_ENCOUNTER 必须为 18 字节");
+    const flags = bytes[17];
     return {
       type: "socialEncounter",
       command: frame.command,
-      peerToken: readUint32LE(bytes, 0),
-      rssi: bytes[4] > 127 ? bytes[4] - 256 : bytes[4],
-      ageSeconds: readUint32LE(bytes, 5)
+      encounterId: encounterIdFromBytes(bytes, 0),
+      peerToken: readUint32LE(bytes, 8),
+      rssi: bytes[12] > 127 ? bytes[12] - 256 : bytes[12],
+      occurredAt: readUint32LE(bytes, 13),
+      timestampValid: Boolean(flags & 0x01),
+      flags
     };
   }
   return { type: "unknown", command: frame.command, payload: bytes };
@@ -322,7 +366,11 @@ module.exports = {
   parseSocialModeData,
   buildSetSocialModePayload,
   buildFindDevicePayload,
+  buildAlertSettingsPayload,
+  parseAlertSettingsData,
   buildUint32Payload,
+  encounterIdFromBytes,
+  buildEncounterAckPayload,
   parseEvent,
   hasCapability,
   readUint16LE,

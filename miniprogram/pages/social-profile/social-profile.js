@@ -34,8 +34,7 @@ Page({
     intentionLabel: profileService.INTENTION_LABELS[INITIAL_PROFILE.intention],
     customTag: "",
     saved: false,
-    saving: false,
-    greetingSent: false
+    saving: false
   },
 
   onShow() {
@@ -45,9 +44,52 @@ Page({
       profile,
       tagOptions: buildTagOptions(profile.tags),
       intentionLabel: profileService.INTENTION_LABELS[profile.intention],
-      saved: false,
-      greetingSent: false
+      saved: false
     });
+    this.restoreCloudProfileIfNeeded(profile);
+  },
+
+  async restoreCloudProfileIfNeeded(localProfile) {
+    if (this._cloudProfileChecked) return;
+    this._cloudProfileChecked = true;
+    try {
+      const cloudProfile = await socialService.getMyProfile();
+      if (!cloudProfile) return;
+      const legacyContactOptions = Array.isArray(cloudProfile.legacyContactOptions)
+        ? cloudProfile.legacyContactOptions
+        : [];
+      if (legacyContactOptions.length) {
+        const sourceContacts = localProfile.contactOptions.length
+          ? localProfile.contactOptions
+          : legacyContactOptions;
+        const baseProfile = localProfile.updatedAt > 0
+          ? profileService.normalizeProfile(Object.assign({}, localProfile, { contactOptions: sourceContacts }))
+          : profileService.fromCloudProfile(Object.assign({}, cloudProfile, { contactOptions: sourceContacts }));
+        let profile = await socialService.localizeContactOptions(baseProfile);
+        profile = profileService.saveProfile(profile);
+        this._savedProfile = profile;
+        this.setData({
+          profile,
+          tagOptions: buildTagOptions(profile.tags),
+          intentionLabel: profileService.INTENTION_LABELS[profile.intention]
+        });
+        const synced = await socialService.saveProfile(profile);
+        profile = profileService.saveProfile(synced.localProfile);
+        this._savedProfile = profile;
+        this.setData({ profile });
+        return;
+      }
+      if (localProfile.updatedAt > 0 || this.data.profile.updatedAt > 0) return;
+      const profile = profileService.saveProfile(profileService.fromCloudProfile(cloudProfile));
+      this._savedProfile = profile;
+      this.setData({
+        profile,
+        tagOptions: buildTagOptions(profile.tags),
+        intentionLabel: profileService.INTENTION_LABELS[profile.intention]
+      });
+    } catch (error) {
+      console.warn("云端社交名片恢复失败：", error && error.message);
+    }
   },
 
   onUnload() {
@@ -56,11 +98,23 @@ Page({
         (!this._savedProfile || profile.avatarValue !== this._savedProfile.avatarValue)) {
       this.removeAvatarFile(profile.avatarValue);
     }
+    this.removeContactQrFilesNotInProfile(profile, this._savedProfile);
   },
 
   removeAvatarFile(filePath) {
     if (!filePath || typeof wx.removeSavedFile !== "function") return;
     wx.removeSavedFile({ filePath, fail() {} });
+  },
+
+  removeContactQrFilesNotInProfile(sourceProfile, retainedProfile) {
+    const retainedPaths = new Set((retainedProfile && retainedProfile.contactOptions || [])
+      .map(option => option && option.localPath)
+      .filter(Boolean));
+    (sourceProfile && sourceProfile.contactOptions || []).forEach(option => {
+      if (option && option.localPath && !retainedPaths.has(option.localPath)) {
+        this.removeAvatarFile(option.localPath);
+      }
+    });
   },
 
   selectVirtualAvatar(event) {
@@ -158,9 +212,69 @@ Page({
     this.setData({
       "profile.intention": intention,
       intentionLabel: profileService.INTENTION_LABELS[intention],
-      saved: false,
-      greetingSent: false
+      saved: false
     });
+  },
+
+  addContactOption(event) {
+    const options = this.data.profile.contactOptions.slice();
+    if (options.length >= 8) {
+      wx.showToast({ title: "最多保存 8 条分享资料", icon: "none" });
+      return;
+    }
+    const option = profileService.createContactOption(event.currentTarget.dataset.type);
+    options.push(option);
+    this.setData({ "profile.contactOptions": options, saved: false });
+  },
+
+  inputContactOption(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const field = String(event.currentTarget.dataset.field || "");
+    if (!Number.isInteger(index) || index < 0 || !["label", "value"].includes(field)) return;
+    this.setData({
+      [`profile.contactOptions[${index}].${field}`]: String(event.detail.value || ""),
+      saved: false
+    });
+  },
+
+  chooseContactQr(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const option = this.data.profile.contactOptions[index];
+    if (!option || option.type !== "qr") return;
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ["image"],
+      sourceType: ["album", "camera"],
+      success: async result => {
+        const file = result.tempFiles && result.tempFiles[0];
+        if (!file || !file.tempFilePath) return;
+        try {
+          const localPath = await socialService.saveContactQrLocally(file.tempFilePath);
+          this.setData({
+            [`profile.contactOptions[${index}].localPath`]: localPath,
+            [`profile.contactOptions[${index}].qrCodeFileId`]: "",
+            saved: false
+          });
+        } catch (error) {
+          wx.showToast({ title: error.message || "二维码保存失败", icon: "none" });
+        }
+      }
+    });
+  },
+
+  previewContactQr(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const option = this.data.profile.contactOptions[index];
+    const source = option && (option.localPath || option.qrCodeFileId);
+    if (source) wx.previewImage({ urls: [source], current: source });
+  },
+
+  removeContactOption(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const options = this.data.profile.contactOptions.slice();
+    if (!options[index]) return;
+    options.splice(index, 1);
+    this.setData({ "profile.contactOptions": options, saved: false });
   },
 
   async saveProfile() {
@@ -170,12 +284,18 @@ Page({
       wx.showToast({ title: "请填写昵称", icon: "none" });
       return;
     }
+    const contactError = validateContactOptions(this.data.profile.contactOptions);
+    if (contactError) {
+      wx.showToast({ title: contactError, icon: "none" });
+      return;
+    }
     const oldSavedProfile = this._savedProfile;
     let profile = profileService.saveProfile(this.data.profile);
     if (oldSavedProfile && oldSavedProfile.avatarType === "custom" &&
         oldSavedProfile.avatarValue !== profile.avatarValue) {
       this.removeAvatarFile(oldSavedProfile.avatarValue);
     }
+    this.removeContactQrFilesNotInProfile(oldSavedProfile, profile);
     this._savedProfile = profile;
     this.setData({
       profile,
@@ -188,8 +308,8 @@ Page({
       profile = profileService.saveProfile(synced.localProfile);
       this._savedProfile = profile;
       this.setData({ profile, saved: true });
-      await yuntuanDevice.refreshSocialRegistration();
-      wx.showToast({ title: "名片已同步云端", icon: "success" });
+      await yuntuanDevice.refreshSocialRegistration(true);
+      wx.showToast({ title: "名片已同步，私密资料仅存本机", icon: "none" });
     } catch (error) {
       wx.showModal({
         title: "云端同步失败",
@@ -200,14 +320,30 @@ Page({
     } finally {
       this.setData({ saving: false });
     }
-  },
-
-  sendGreeting() {
-    if (this.data.profile.intention === "quiet") {
-      wx.showToast({ title: "对方现在暂不接收招呼", icon: "none" });
-      return;
-    }
-    this.setData({ greetingSent: true });
-    wx.showToast({ title: "名片交互预览", icon: "none" });
   }
 });
+
+function validateContactOptions(options) {
+  const list = Array.isArray(options) ? options : [];
+  for (let index = 0; index < list.length; index += 1) {
+    const option = list[index] || {};
+    const name = String(option.label || "").trim() || `第 ${index + 1} 条资料`;
+    if (!String(option.label || "").trim()) return `请填写${name}的名称`;
+    if (option.type === "qr") {
+      if (!option.localPath && !option.qrCodeFileId) return `请为${name}选择二维码`;
+      continue;
+    }
+    const value = String(option.value || "").trim();
+    if (!value) return `请填写${name}`;
+    if (option.type === "wechat" && (!/^[^\s]{5,32}$/.test(value) || /https?:\/\//i.test(value))) {
+      return `${name}格式不正确`;
+    }
+    if (option.type === "phone") {
+      const digits = value.replace(/\D/g, "");
+      if (!/^\+?[0-9-]{6,20}$/.test(value) || digits.length < 6 || digits.length > 15) {
+        return `${name}格式不正确`;
+      }
+    }
+  }
+  return "";
+}

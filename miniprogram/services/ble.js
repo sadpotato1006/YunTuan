@@ -525,6 +525,20 @@ async function negotiateMTU(preferredMTU, writeType) {
   }
 }
 
+function emitSimulatorSocialEncounter(peerToken, rssi) {
+  requireConnected();
+  if (!state.simulated) throw new Error("只有模拟挂件可以手动注入相遇事件");
+  const value = bleMock.createSocialEncounterValue(peerToken, rssi);
+  addLog("SIM", "模拟遇见另一台云团挂件", `Token ${peerToken} | ${rssi || -55} dBm`);
+  handleValueChange({
+    deviceId: state.deviceId,
+    serviceId: config.UUIDS.controlService,
+    characteristicId: config.UUIDS.eventTx,
+    value
+  });
+  return getState();
+}
+
 function requireConnected() {
   if (!state.connected || !state.deviceId) throw new Error("请先连接 BLE 设备");
 }
@@ -667,6 +681,7 @@ module.exports = {
   writeCharacteristic,
   writeBuffer,
   negotiateMTU,
+  emitSimulatorSocialEncounter,
   getState,
   subscribe,
   subscribeValues,

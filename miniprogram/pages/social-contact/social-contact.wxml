@@ -1,0 +1,48 @@
+<view class="page contact-page">
+  <view class="privacy-note">
+    <text class="privacy-note-title">按需分享</text>
+    <text>你的资料预设只保存在本机。只有点击“分享所选资料”后，本次选择才会上传并展示给这位伙伴。</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="loading">正在加载联系方式…</view>
+  <block wx:else>
+    <view class="section-heading">TA 分享给你的</view>
+    <view class="card contact-card">
+      <view wx:if="{{contactExchange.peerContact && contactExchange.peerContact.items.length}}" class="shared-list">
+        <view wx:for="{{contactExchange.peerContact.items}}" wx:key="id" class="shared-row">
+          <view class="shared-copy">
+            <text class="shared-label">{{item.label}}</text>
+            <text wx:if="{{item.type !== 'qr'}}" class="shared-value" selectable>{{item.value}}</text>
+            <text wx:else class="shared-value">点击查看二维码</text>
+          </view>
+          <image wx:if="{{item.type === 'qr'}}" class="shared-qr" src="{{item.qrCodeFileId}}" mode="aspectFill" data-src="{{item.qrCodeFileId}}" bindtap="previewQr" />
+        </view>
+      </view>
+      <text wx:else class="empty-copy">TA 还没有主动分享联系方式</text>
+    </view>
+
+    <view class="section-heading mine-heading">我想分享</view>
+    <view class="card contact-card">
+      <text class="selection-tip">可以选择一条或多条，只会上传这次勾选的内容。</text>
+      <view wx:if="{{localOptions.length}}" class="option-list">
+        <view wx:for="{{localOptions}}" wx:key="id" class="option-row {{item.selected ? 'selected' : ''}}" data-id="{{item.id}}" bindtap="toggleOption">
+          <text class="check-mark">{{item.selected ? '✓' : ''}}</text>
+          <view class="option-copy">
+            <text class="option-label">{{item.label}}</text>
+            <text wx:if="{{item.type !== 'qr'}}" class="option-value">{{item.value}}</text>
+            <text wx:else class="option-value">本机二维码</text>
+          </view>
+          <image wx:if="{{item.type === 'qr' && item.previewSource}}" class="option-qr" src="{{item.previewSource}}" mode="aspectFill" data-src="{{item.previewSource}}" catchtap="previewQr" />
+        </view>
+      </view>
+      <view wx:else class="empty-local">
+        <text>本机还没有联系方式预设</text>
+        <text>先添加常用微信号、手机号或二维码，再回来选择分享。</text>
+      </view>
+      <button class="manage-button" bindtap="manageLocalOptions">管理本机资料</button>
+      <button wx:if="{{localOptions.length}}" class="share-button" loading="{{saving}}" disabled="{{saving}}" bindtap="shareSelected">分享所选资料</button>
+      <button wx:if="{{contactExchange.myContact}}" class="withdraw-button" disabled="{{saving}}" bindtap="confirmWithdraw">撤回当前分享</button>
+      <text wx:if="{{contactExchange.myContact}}" class="withdraw-tip">撤回无法删除对方已经复制、保存或截图的内容。</text>
+    </view>
+  </block>
+</view>

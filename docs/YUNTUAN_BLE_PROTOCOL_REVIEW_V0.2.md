@@ -165,7 +165,7 @@ Protocol Info 固定为 6 字节：
 | 偏移 | 长度 | 字段 | 说明 |
 | --- | --- | --- | --- |
 | 0 | 1 | ProtocolMajor | 当前为 `1` |
-| 1 | 1 | ProtocolMinor | 当前为 `0` |
+| 1 | 1 | ProtocolMinor | 当前为 `7` |
 | 2 | 2 | Capabilities | uint16，小端 |
 | 4 | 1 | SecurityMode | `0` 实验室；`1` 量产认证 |
 | 5 | 1 | Reserved | 固定为 `0` |
@@ -182,7 +182,11 @@ Capabilities：
 | 5 | 设备时间同步 |
 | 6 | 量产会话认证 |
 | 7 | OTA，第一阶段不得置 1 |
-| 8～15 | 保留，必须置 0 |
+| 8 | 实时录音上传 |
+| 9 | 边收边播 |
+| 10 | 可靠相遇事件与 ACK |
+| 11 | 提醒策略同步 |
+| 12～15 | 保留，必须置 0 |
 
 示例：设备支持电量、社交模式、查找、按键和充电状态，实验室模式下返回：
 
@@ -214,11 +218,11 @@ Capabilities：
 | 4 | 1 | Sequence | 请求序号 |
 | 5 | 1 | FragmentIndex | 第一阶段固定 `0` |
 | 6 | 1 | FragmentCount | 第一阶段固定 `1` |
-| 7 | 1 | PayloadLength | Payload 字节数，第一阶段 `0～10` |
+| 7 | 1 | PayloadLength | Payload 字节数，当前 `0～18` |
 | 8 | N | Payload | 命令负载 |
 | 8+N | 2 | CRC16 | 低字节在前 |
 
-第一阶段完整帧不得超过 20 字节，不实现分片。若后续命令需要超过 10 字节 Payload，双方评审分片规则后再启用，不能私自发送超长帧。
+当前完整帧不得超过 28 字节，不实现分片。18 字节上限用于可靠相遇事件；更长业务数据必须使用独立 Audio/TTS 分包协议或另行评审。
 
 ### 7.2 Flags
 
@@ -290,6 +294,9 @@ Capabilities：
 | `0x04` | FIND_DEVICE | AlertType、Duration | 无 | 有振动或蜂鸣器时必须 |
 | `0x05` | SET_TIME | UnixTime | 无 | 建议 |
 | `0x06` | PING | Random | 原样返回 Random | 必须 |
+| `0x07` | GET_SOCIAL_TOKEN | 无 | 当前广播匿名 Token | 支持相遇时必须 |
+| `0x08` | ACK_SOCIAL_ENCOUNTER | EncounterId 8 字节 | 剩余队列数量 | 支持相遇时必须 |
+| `0x09` | SET_ALERT_SETTINGS | 三个布尔设置 | 三个实际生效值 | 支持提醒设置时必须 |
 | `0x10～0x1F` | 绑定和认证 | 后续定义 | 后续定义 | 预留 |
 
 ### 9.2 HELLO `0x01`
@@ -341,7 +348,7 @@ Capabilities：
 
 | 偏移 | 长度 | 字段 | 说明 |
 | --- | --- | --- | --- |
-| 0 | 1 | AlertType | 0 振动；1 提示音；2 振动+提示音 |
+| 0 | 1 | AlertType | 0 振动；1 提示音；2 振动+提示音；3 仅闪灯 |
 | 1 | 2 | Duration | uint16 毫秒，小端，范围 500～10000 |
 
 成功响应无附加数据。重复 Sequence 不得导致设备重复振动或重复鸣响。
@@ -356,9 +363,21 @@ Capabilities：
 
 请求 Payload 为 4 字节随机值，成功响应原样返回相同 4 字节。PING 不改变设备状态，用于联调和检测链路可用性。
 
+### 9.8 SET_ALERT_SETTINGS `0x09`
+
+请求 Payload 和成功响应附加数据均为 3 字节：
+
+| 偏移 | 长度 | 字段 | 说明 |
+| ---: | ---: | --- | --- |
+| 0 | 1 | SocialReminder | 0 关闭相遇提醒；1 开启 |
+| 1 | 1 | Vibration | 0 关闭振动；1 开启 |
+| 2 | 1 | Sound | 0 关闭声音；1 开启 |
+
+三个字段只能为 0 或 1。设备必须持久化后返回实际生效值；关闭相遇提醒不影响相遇事件记录和上报，只关闭挂件及小程序主动提醒。振动和声音同时关闭时，查找设备退化为仅闪灯。
+
 ## 10. 设备主动事件
 
-事件 Flags=`0x02`，Sequence=`0`，不需要小程序返回应用层响应。
+事件 Flags=`0x02`，Sequence=`0`。除 `SOCIAL_ENCOUNTER` 外不需要应用层响应；`SOCIAL_ENCOUNTER` 必须在本地持久化后通过 `0x08` ACK。
 
 | Command | 名称 | Payload |
 | --- | --- | --- |
@@ -366,6 +385,7 @@ Capabilities：
 | `0x21` | BUTTON_EVENT | ButtonType 1 字节 + UnixTime 4 字节 |
 | `0x22` | LOW_BATTERY | Battery 1 字节 |
 | `0x23` | BIND_WINDOW_CHANGED | BindState 1 字节，第一阶段可不实现 |
+| `0x24` | SOCIAL_ENCOUNTER | EncounterId 8 字节、PeerToken 4 字节、RSSI 1 字节、UnixTime 4 字节、Flags 1 字节 |
 
 ButtonType：
 
@@ -425,7 +445,10 @@ A5 01 01 03 02 00 01 03 00 00 01 65 EC
   → 读取 Protocol Info
   → 校验主版本和能力位
   → 发送 HELLO
+  → 支持时间同步时发送 SET_TIME
   → 发送 GET_STATUS
+  → 发送 SET_ALERT_SETTINGS
+  → 支持相遇时发送 GET_SOCIAL_TOKEN
   → 进入 READY
 ```
 
@@ -470,6 +493,7 @@ IDLE
 - 每次重新连接、小程序从后台恢复、手机蓝牙重新开启后，重新执行 GET_STATUS；
 - 正常连接期间依靠 Notify 更新，不高频轮询；
 - 社交模式应保存到非易失存储，设备重启后保持上一次成功设置；
+- 社交提醒、振动和声音策略应保存到非易失存储，并以 `SET_ALERT_SETTINGS` 响应值为准；
 - 设备不支持的功能必须关闭 Capability 位并返回 NOT_SUPPORTED。
 
 ## 15. 实验室模式和量产模式
@@ -478,7 +502,7 @@ IDLE
 
 - Protocol Info 中 `SecurityMode=0`；
 - 仅用于指定测试硬件；
-- HELLO、GET_STATUS、SET_SOCIAL_MODE、FIND_DEVICE、SET_TIME、PING 暂不要求认证；
+- HELLO、GET_STATUS、SET_SOCIAL_MODE、FIND_DEVICE、SET_TIME、PING、GET_SOCIAL_TOKEN、ACK_SOCIAL_ENCOUNTER、SET_ALERT_SETTINGS 暂不要求认证；
 - 固件版本号和日志必须能识别实验室固件；
 - 实验室模式固件不得用于交付和量产。
 

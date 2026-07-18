@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "伙伴",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "profile-card-item": "/components/profile-card-item/profile-card-item"
+  }
+}

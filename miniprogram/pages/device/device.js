@@ -1,5 +1,9 @@
 const deviceService = require("../../services/device");
 const profileService = require("../../services/social-profile");
+const socialService = require("../../services/social");
+const encounterStore = require("../../services/social-encounters");
+const settingsService = require("../../services/settings");
+const tabSwipe = require("../../utils/tab-swipe");
 Page({
   data: {
     loading: true,
@@ -9,6 +13,10 @@ Page({
     available: false,
     statusText: "正在初始化蓝牙…",
     nearbyDevices: [],
+    tabSwipeStyle: "",
+    latestEncounter: null,
+    settings: settingsService.getSettings(),
+    settingSaving: false,
     socialProfile: profileService.toPublicCard(profileService.getProfile()),
     device: {
       name: "云团智能挂件",
@@ -25,11 +33,13 @@ Page({
 
   onLoad() {
     this.unsubscribe = deviceService.subscribe(state => {
+      const latestEncounter = deviceService.getEncounterRecords()[0] || null;
       this.setData({
         discovering: state.discovering,
         available: state.available,
         statusText: state.statusText,
         nearbyDevices: state.devices || [],
+        latestEncounter,
         device: Object.assign({}, this.data.device, {
           id: state.deviceId,
           name: state.name,
@@ -42,6 +52,7 @@ Page({
           battery: state.battery,
           chargingState: state.chargingState,
           socialMode: state.socialMode,
+          ownSocialToken: state.ownSocialToken,
           uptime: state.uptime,
           protocolMajor: state.protocolMajor,
           protocolMinor: state.protocolMinor,
@@ -53,7 +64,9 @@ Page({
           errorMessage: state.errorMessage,
           lastEventText: state.lastEventText,
           lastEncounterAt: state.lastEncounterAt,
+          lastEncounterId: state.lastEncounterId,
           lastEncounterText: state.lastEncounterText,
+          lastEncounterTimeEstimated: state.lastEncounterTimeEstimated,
           lastEncounterRssi: state.lastEncounterRssi,
           encounterCount: state.encounterCount,
           lastEncounterProfile: state.lastEncounterProfile,
@@ -65,9 +78,16 @@ Page({
   },
 
   async onShow() {
-    this.setData({ socialProfile: profileService.toPublicCard(profileService.getProfile()) });
+    tabSwipe.enter(this, "/pages/device/device");
+    this.setData({
+      socialProfile: profileService.toPublicCard(profileService.getProfile()),
+      settings: settingsService.getSettings()
+    });
     await this.initializeDevice();
     await this.loadDevice();
+    deviceService.refreshSocialRegistration().catch(error => {
+      console.warn("社交匿名令牌续期失败：", error && error.message);
+    });
   },
 
   onUnload() {
@@ -90,7 +110,11 @@ Page({
   async loadDevice() {
     try {
       const result = await deviceService.getDevice();
-      this.setData({ device: result.data.device, loading: false });
+      this.setData({
+        device: result.data.device,
+        latestEncounter: deviceService.getEncounterRecords()[0] || null,
+        loading: false
+      });
     } catch (error) { this.showError(error); }
     finally { wx.stopPullDownRefresh(); }
   },
@@ -143,20 +167,6 @@ Page({
     }
   },
 
-  async loadSimulator() {
-    if (this.data.operating) return;
-    this.setData({ operating: true });
-    try {
-      const result = await deviceService.loadSimulator();
-      this.setData({ device: result.data.device });
-      wx.showToast({ title: "模拟挂件已连接", icon: "success" });
-    } catch (error) {
-      this.showError(error);
-    } finally {
-      this.setData({ operating: false });
-    }
-  },
-
   async reconnectLastDevice() {
     if (this.data.operating) return;
     this.setData({ operating: true });
@@ -187,6 +197,28 @@ Page({
     }
   },
 
+  async updateAlertSetting(event) {
+    if (!this.data.device.ready || this.data.settingSaving) return;
+    const key = String(event.currentTarget.dataset.key || "");
+    if (!Object.prototype.hasOwnProperty.call(settingsService.DEFAULT_SETTINGS, key)) return;
+    const previous = this.data.settings;
+    const next = settingsService.normalizeSettings(Object.assign({}, previous, {
+      [key]: event.detail.value
+    }));
+    this.setData({ settingSaving: true });
+    try {
+      const result = await deviceService.setAlertSettings(next);
+      const settings = settingsService.saveSettings(result.data.settings || next);
+      this.setData({ settings });
+      wx.showToast({ title: "提醒设置已同步", icon: "success" });
+    } catch (error) {
+      this.setData({ settings: previous });
+      this.showError(error);
+    } finally {
+      this.setData({ settingSaving: false });
+    }
+  },
+
   async findDevice() {
     if (!this.data.device.ready || this.data.operating) return;
     this.setData({ operating: true });
@@ -200,46 +232,51 @@ Page({
     }
   },
 
-  async pingDevice() {
-    if (!this.data.device.ready || this.data.operating) return;
-    this.setData({ operating: true });
+  async retryEncounterProfile() {
+    if (this.data.device.encounterProfileLoading) return;
     try {
-      await deviceService.ping();
-      wx.showToast({ title: "通信正常", icon: "success" });
+      await deviceService.retryLastEncounterProfile();
     } catch (error) {
       this.showError(error);
-    } finally {
-      this.setData({ operating: false });
     }
   },
 
-  goBleDebug() { wx.navigateTo({ url: "/pages/ble-debug/ble-debug" }); },
-
-  disconnectDevice() {
-    if (this.data.operating) return;
-    wx.showModal({
-      title: "断开设备",
-      content: "断开后将暂时无法接收挂件状态，确定继续吗？",
-      confirmText: "断开",
-      confirmColor: "#C06052",
-      success: result => {
-        if (result.confirm) this.runDisconnect();
+  async greetLatestEncounter() {
+    const latest = this.data.latestEncounter;
+    if (!latest || !latest.interactionRef || this.data.operating) return;
+    this.setData({ operating: true });
+    try {
+      const result = await socialService.sendGreeting(latest.interactionRef);
+      const updated = encounterStore.markGreeting(
+        latest.encounterId,
+        result.matched ? "matched" : "sent"
+      );
+      this.setData({ latestEncounter: updated ? encounterStore.toDisplayRecord(updated) : latest });
+      if (result.matched) {
+        wx.showModal({
+          title: "你们已经认识啦",
+          content: "测试伙伴已经接受招呼，可以前往伙伴页开始聊天。",
+          confirmText: "去聊天",
+          cancelText: "稍后",
+          success: modal => { if (modal.confirm) this.goSocialInbox(); }
+        });
+      } else {
+        wx.showToast({ title: "招呼已发送", icon: "success" });
       }
-    });
-  },
-
-  async runDisconnect() {
-    this.setData({ operating: true });
-    try {
-      const result = await deviceService.disconnectDevice();
-      this.setData({ device: result.data.device });
-      wx.showToast({ title: "设备已断开", icon: "success" });
     } catch (error) {
       this.showError(error);
     } finally {
       this.setData({ operating: false });
     }
   },
+
+  goDeviceDetails() { wx.navigateTo({ url: "/pages/device-lab/device-lab" }); },
+  goEncounters() { wx.navigateTo({ url: "/pages/encounters/encounters" }); },
+  goSocialInbox() { wx.switchTab({ url: "/pages/partners/partners" }); },
+  onTabSwipeStart(event) { tabSwipe.start(this, event); },
+  onTabSwipeMove(event) { tabSwipe.move(this, event, "/pages/device/device"); },
+  onTabSwipeEnd(event) { tabSwipe.end(this, event, "/pages/device/device"); },
+  onTabSwipeCancel() { tabSwipe.cancel(this); },
 
   showError(error) {
     this.setData({ loading: false });

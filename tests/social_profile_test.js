@@ -18,6 +18,10 @@ const normalized = profileService.normalizeProfile({
   bio: "  想认识一起跑步的朋友  ",
   tags: ["跑步", "摄影", "跑步", "音乐", "不应保留"],
   intention: "buddy",
+  contactOptions: [
+    { id: "contact_wechat_test", type: "wechat", label: "常用微信", value: "yun_tuan_test" },
+    { id: "contact_phone_test", type: "phone", label: "备用手机", value: "13800000000" }
+  ],
   phone: "13800000000",
   openid: "must-not-leak",
   realName: "真实姓名",
@@ -29,6 +33,11 @@ assert.strictEqual(normalized.nickname, "小 云");
 assert.strictEqual(normalized.bio, "想认识一起跑步的朋友");
 assert.deepStrictEqual(normalized.tags, ["跑步", "摄影", "音乐"]);
 assert.strictEqual(normalized.intention, "buddy");
+assert.strictEqual(normalized.contactOptions.length, 2);
+const cloudProfile = profileService.toCloudProfile(normalized);
+assert.strictEqual(cloudProfile.contactOptions, undefined);
+assert.ok(!JSON.stringify(cloudProfile).includes("yun_tuan_test"));
+assert.ok(!JSON.stringify(cloudProfile).includes("13800000000"));
 
 const saved = profileService.saveProfile(normalized);
 assert.deepStrictEqual(profileService.getProfile(), saved);
@@ -47,29 +56,47 @@ assert.deepStrictEqual(Object.keys(publicCard).sort(), [
 ].sort());
 assert.strictEqual(publicCard.intentionLabel, "找搭子");
 assert.ok(!JSON.stringify(publicCard).includes("13800000000"));
+assert.ok(!JSON.stringify(publicCard).includes("yun_tuan_test"));
 assert.ok(!JSON.stringify(publicCard).includes("must-not-leak"));
+
+const restored = profileService.fromCloudProfile({
+  avatarType: "custom",
+  avatarValue: "cloud://test-env/social-avatars/restored.jpg",
+  avatarColor: "#DFECE5",
+  nickname: "云端昵称",
+  bio: "云端介绍",
+  tags: ["摄影"],
+  intention: "chat"
+});
+assert.strictEqual(restored.avatarValue, "cloud://test-env/social-avatars/restored.jpg");
+assert.strictEqual(restored.avatarCloudFileId, restored.avatarValue);
+assert.ok(restored.updatedAt > 0);
 
 const appConfig = JSON.parse(fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "app.json"),
   "utf8"
 ));
 assert.ok(appConfig.pages.includes("pages/social-profile/social-profile"));
+assert.ok(appConfig.pages.includes("pages/encounters/encounters"));
+assert.ok(!appConfig.pages.includes("pages/social-inbox/social-inbox"));
 
 const pageWxml = fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "pages", "social-profile", "social-profile.wxml"),
   "utf8"
 );
 assert.match(pageWxml, /open-type="chooseAvatar"/);
-assert.match(pageWxml, /打个招呼/);
+assert.match(pageWxml, /真实相遇后向你打招呼/);
 assert.match(pageWxml, /兴趣标签/);
 assert.match(pageWxml, /当前社交意愿/);
+assert.match(pageWxml, /私密分享资料/);
+assert.match(pageWxml, /只保存在本机/);
 
 const settingsWxml = fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "pages", "settings", "settings.wxml"),
   "utf8"
 );
 assert.match(settingsWxml, /socialProfile\.nickname/);
-assert.match(settingsWxml, /点击进入编辑名片/);
+assert.match(settingsWxml, /编辑我的社交名片/);
 
 const deviceWxml = fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "pages", "device", "device.wxml"),
@@ -77,6 +104,23 @@ const deviceWxml = fs.readFileSync(
 );
 assert.match(deviceWxml, /socialProfile\.avatarValue/);
 assert.match(deviceWxml, /socialProfile\.nickname/);
+assert.match(deviceWxml, /device\.lastEncounterProfile\.nickname/);
+assert.match(deviceWxml, /重新获取名片/);
+assert.match(deviceWxml, /bindtap="greetLatestEncounter"/);
 assert.doesNotMatch(deviceWxml, /class="device-mark"/);
+
+const encountersWxml = fs.readFileSync(
+  path.join(__dirname, "..", "miniprogram", "pages", "encounters", "encounters.wxml"),
+  "utf8"
+);
+assert.match(encountersWxml, /打个招呼/);
+assert.match(encountersWxml, /最近 30 次相遇/);
+
+const partnersWxml = fs.readFileSync(
+  path.join(__dirname, "..", "miniprogram", "pages", "partners", "partners.wxml"),
+  "utf8"
+);
+assert.match(partnersWxml, /认识 TA/);
+assert.match(partnersWxml, /respondGreeting/);
 
 console.log("social profile tests passed");

@@ -71,7 +71,34 @@
     </view>
   </view>
 
-  <button class="primary-btn save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="saveProfile">{{saving ? '正在同步云端' : '保存社交名片'}}</button>
+  <view class="card form-card private-contact-card">
+    <view class="field-header">
+      <text class="section-title compact-title">私密分享资料</text>
+      <text>{{profile.contactOptions.length}}/8</text>
+    </view>
+    <text class="field-tip">这些预设只保存在本机，不会随名片上传云端。双方同意后，你仍需主动选择要分享的条目。</text>
+    <view class="contact-add-row">
+      <button data-type="wechat" bindtap="addContactOption">＋ 微信号</button>
+      <button data-type="phone" bindtap="addContactOption">＋ 手机号</button>
+      <button data-type="qr" bindtap="addContactOption">＋ 二维码</button>
+    </view>
+    <view wx:if="{{!profile.contactOptions.length}}" class="contact-empty">暂未保存分享资料，可在需要时再添加</view>
+    <view wx:for="{{profile.contactOptions}}" wx:key="id" class="contact-option-editor">
+      <view class="contact-option-head">
+        <text>{{item.type === 'wechat' ? '微信号' : (item.type === 'phone' ? '手机号' : '二维码')}}</text>
+        <button data-index="{{index}}" bindtap="removeContactOption">删除</button>
+      </view>
+      <input class="text-input contact-label-input" maxlength="12" value="{{item.label}}" placeholder="名称，例如：常用微信" data-index="{{index}}" data-field="label" bindinput="inputContactOption" />
+      <input wx:if="{{item.type !== 'qr'}}" class="text-input contact-value-input" maxlength="{{item.type === 'wechat' ? 32 : 20}}" value="{{item.value}}" placeholder="{{item.type === 'wechat' ? '填写微信号' : '填写手机号'}}" data-index="{{index}}" data-field="value" bindinput="inputContactOption" />
+      <view wx:else class="contact-qr-editor">
+        <image wx:if="{{item.localPath || item.qrCodeFileId}}" src="{{item.localPath || item.qrCodeFileId}}" mode="aspectFill" data-index="{{index}}" bindtap="previewContactQr" />
+        <view wx:else class="contact-qr-placeholder">二维码</view>
+        <button data-index="{{index}}" bindtap="chooseContactQr">{{item.localPath || item.qrCodeFileId ? '更换图片' : '选择图片'}}</button>
+      </view>
+    </view>
+  </view>
+
+  <button class="primary-btn save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="saveProfile">{{saving ? '正在保存' : '保存社交名片'}}</button>
 
   <view class="preview-title">别人将看到的名片</view>
   <view class="card profile-preview">
@@ -87,11 +114,7 @@
         <text wx:for="{{profile.tags}}" wx:key="*this">{{item}}</text>
       </view>
       <text wx:else class="preview-empty-tags">还没有选择兴趣标签</text>
-      <button
-        class="greeting-btn {{greetingSent ? 'sent' : ''}}"
-        disabled="{{greetingSent || profile.intention === 'quiet'}}"
-        bindtap="sendGreeting"
-      >{{profile.intention === 'quiet' ? '暂不接收招呼' : (greetingSent ? '已打招呼' : '打个招呼')}}</button>
+      <text class="preview-privacy-tip">对方只能在真实相遇后向你打招呼</text>
     </view>
   </view>
 </view>

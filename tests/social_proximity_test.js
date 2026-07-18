@@ -27,32 +27,64 @@ assert.match(firmware, /setMaxResults\(0\)/);
 assert.match(firmware, /BLE_GAP_CONN_MODE_UND\s*:\s*BLE_GAP_CONN_MODE_NON/);
 assert.match(firmware, /g_preferences\.putBool\("social"/);
 assert.match(firmware, /EVT_SOCIAL_ENCOUNTER\s+0x24/);
-assert.match(firmware, /SOCIAL_EVENT_QUEUE_CAPACITY\s+4/);
+assert.match(firmware, /SOCIAL_EVENT_QUEUE_CAPACITY\s+20/);
+assert.match(firmware, /CMD_ACK_SOCIAL_ENCOUNTER\s+0x08/);
+assert.match(firmware, /CMD_SET_ALERT_SETTINGS\s+0x09/);
+assert.match(firmware, /g_preferences\.putBool\("socialAlert"/);
+assert.match(firmware, /g_preferences\.putBytes\(key, &snapshot/);
+assert.match(firmware, /persistSocialEncounterQueue\(\)/);
+assert.match(firmware, /acknowledgeSocialEncounter/);
+assert.match(firmware, /if \(!pEventTx->notify\(frame, frameLen\)\)/);
 assert.match(firmware, /pEventTx->setCallbacks\(new EventTxCB\(\)\)/);
 assert.match(deviceService, /event\.type === "socialEncounter"/);
 assert.match(deviceService, /title: "遇到云团伙伴啦"/);
+assert.match(deviceService, /socialService\.resolveToken\(peerToken\)/);
+assert.match(deviceService, /SOCIAL_REGISTRATION_REFRESH_MS/);
+assert.match(deviceService, /retryLastEncounterProfile/);
 assert.match(devicePage, /device\.lastEncounterAt/);
+assert.match(devicePage, /device\.lastEncounterProfile/);
 assert.doesNotMatch(
   firmware,
   /g_advertising->addServiceUUID\(BATTERY_SERVICE_UUID\)/,
   "legacy advertisement must retain room for the social beacon"
 );
 assert.strictEqual(3 + 18 + 10, 31, "flags + 128-bit UUID + manufacturer AD must fit legacy advertising");
-assert.strictEqual(config.protocolMinor, 0x05);
+assert.strictEqual(config.protocolMinor, 0x07);
+assert.strictEqual(config.maxPayloadLength, 18);
+assert.strictEqual(config.controlMinMTU, 31);
+assert.strictEqual(config.COMMANDS.ACK_SOCIAL_ENCOUNTER, 0x08);
+assert.strictEqual(config.COMMANDS.SET_ALERT_SETTINGS, 0x09);
 assert.strictEqual(config.COMMANDS.SOCIAL_ENCOUNTER, 0x24);
 assert.strictEqual(config.capabilities.socialEncounter, 1 << 10);
+assert.strictEqual(config.capabilities.alertSettings, 1 << 11);
 
-const encounterFrame = protocol.createEvent(
-  config.COMMANDS.SOCIAL_ENCOUNTER,
-  new Uint8Array([0x78, 0x56, 0x34, 0x12, 0xbf, 0x2c, 0x01, 0x00, 0x00])
-);
+const encounterPayload = new Uint8Array(18);
+encounterPayload.set([1, 2, 3, 4, 5, 6, 7, 8], 0);
+protocol.writeUint32LE(encounterPayload, 8, 0x12345678);
+encounterPayload[12] = 0xbf;
+protocol.writeUint32LE(encounterPayload, 13, 1700000000);
+encounterPayload[17] = 0x01;
+const encounterFrame = protocol.createEvent(config.COMMANDS.SOCIAL_ENCOUNTER, encounterPayload);
 assert.deepStrictEqual(protocol.parseEvent(encounterFrame), {
   type: "socialEncounter",
   command: 0x24,
+  encounterId: "0102030405060708",
   peerToken: 0x12345678,
   rssi: -65,
-  ageSeconds: 300
+  occurredAt: 1700000000,
+  timestampValid: true,
+  flags: 1
 });
+
+const ackPayload = protocol.buildEncounterAckPayload("0102030405060708");
+assert.deepStrictEqual(Array.from(ackPayload), [1, 2, 3, 4, 5, 6, 7, 8]);
+assert.strictEqual(protocol.encounterIdFromBytes(ackPayload), "0102030405060708");
+
+const initializeIndex = deviceService.indexOf("async function initializeConnectedDevice");
+const mtuNegotiationIndex = deviceService.indexOf("bleService.negotiateMTU(247", initializeIndex);
+const eventSubscribeIndex = deviceService.indexOf("config.UUIDS.eventTx", initializeIndex);
+assert.ok(mtuNegotiationIndex >= 0 && mtuNegotiationIndex < eventSubscribeIndex,
+  "必须在订阅 Event TX 前协商可容纳 28 字节控制帧的 MTU");
 
 function createPeer() {
   return { filtered: null, near: 0, far: 0, inside: false, cooldownUntil: 0 };

@@ -19,6 +19,7 @@ cloud.init({
 });
 const db = cloud.database();
 const USAGE_COLLECTION = "chat_usage";
+const USAGE_TRANSACTION_RETRY_TIMES = 6;
 const chatIdempotency = createChatIdempotency(db, USAGE_COLLECTION);
 
 /**
@@ -30,6 +31,7 @@ exports.main = async event => {
     const safeEvent = event && typeof event === "object" ? event : {};
     const action = safeEvent.action || "chat";
     const openid = getCurrentOpenid();
+    if (action === "deleteMyChatData") return await deleteMyChatData(openid);
     if (action === "realtimeAsrTicket") return await createRealtimeAsrTicket(openid);
     if (action === "transcribe") return await transcribeAudio(safeEvent, openid);
     if (action === "synthesize") return await synthesizeSpeech(safeEvent, openid);
@@ -47,6 +49,20 @@ exports.main = async event => {
     return { code: 500, message: "聊天服务暂时不可用，请稍后再试", data: {} };
   }
 };
+
+async function deleteMyChatData(openid) {
+  const userKeys = [openid, `${openid}:transcribe`, `${openid}:synthesize`]
+    .map(value => crypto.createHash("sha256").update(value).digest("hex"));
+  await Promise.all(userKeys.map(async userKey => {
+    try {
+      await db.collection(USAGE_COLLECTION).doc(userKey).remove();
+    } catch (error) {
+      const message = String(error && (error.errMsg || error.message) || "");
+      if (!/NOT_FOUND|DOCUMENT_NOT_EXIST|does not exist|-502005/i.test(message)) throw error;
+    }
+  }));
+  return { code: 0, message: "success", data: { deleted: true } };
+}
 
 async function sendChatMessage(event, openid) {
   const message = normalizeMessage(event.message);
@@ -202,7 +218,8 @@ async function enforceUserLimits(openid, action) {
   const now = Date.now();
   const dayKey = getShanghaiDayKey(now);
   const policy = getUsagePolicy(action);
-  const userKey = crypto.createHash("sha256").update(openid).digest("hex");
+  // 语音识别和合成不再与聊天幂等状态共用热点文档；同一动作仍通过事务保证额度准确。
+  const userKey = crypto.createHash("sha256").update(`${openid}:${action}`).digest("hex");
 
   try {
     await ensureUsageDocument(userKey, now, dayKey);
@@ -237,7 +254,7 @@ async function enforceUserLimits(openid, action) {
           updatedAt: now
         }
       });
-    });
+    }, USAGE_TRANSACTION_RETRY_TIMES);
   } catch (error) {
     const message = error && (error.message || error.errMsg) || "";
     if (message.includes("CHAT_RATE_LIMIT")) {

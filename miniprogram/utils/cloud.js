@@ -68,7 +68,7 @@ function callCloudFunction(name, data) {
         fail(error) {
         // 只记录微信返回的错误信息，不输出任何 AI 密钥或敏感配置。
         console.error(`调用云函数 ${name} 失败：`, error);
-          rejectOnce(new Error(getFriendlyCloudError(error)));
+          rejectOnce(new Error(getFriendlyCloudError(error, name)));
         }
       });
     } catch (error) {
@@ -80,18 +80,24 @@ function callCloudFunction(name, data) {
 /**
  * 微信底层 errMsg 往往很长，这里只向用户展示容易理解的简短提示。
  */
-function getFriendlyCloudError(error) {
+function getFriendlyCloudError(error, serviceName) {
   const message = error && error.errMsg ? error.errMsg : "";
+  const serviceLabels = {
+    chat: "聊天服务",
+    social: "社交服务",
+    emotion: "情绪记录服务"
+  };
+  const serviceLabel = serviceLabels[serviceName] || "云端服务";
 
   if (
     message.includes("-504003") ||
     message.includes("TIME_LIMIT_EXCEEDED") ||
     message.toLowerCase().includes("timed out")
   ) {
-    return "AI 回复时间有点长，请稍后再试";
+    return `${serviceLabel}响应时间有点长，请稍后再试`;
   }
   if (message.includes("FUNCTION_NOT_FOUND") || message.includes("-501000")) {
-    return "聊天服务尚未部署，请联系管理员";
+    return `${serviceLabel}尚未部署，请联系管理员`;
   }
   if (message.includes("NETWORK_ERROR") || message.toLowerCase().includes("network")) {
     return "网络连接不稳定，请稍后再试";
@@ -99,7 +105,7 @@ function getFriendlyCloudError(error) {
   if (message.includes("ENV") || message.includes("environment")) {
     return "云开发环境配置有误，请联系管理员";
   }
-  return "聊天服务暂时不可用，请稍后再试";
+  return `${serviceLabel}暂时不可用，请稍后再试`;
 }
 
 // 保留默认函数导出，避免影响 device、emotion 等现有 service；也支持具名导入。

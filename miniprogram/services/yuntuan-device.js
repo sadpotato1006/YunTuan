@@ -2,12 +2,16 @@ const bleService = require("./ble");
 const audioService = require("./yuntuan-audio");
 const ttsService = require("./yuntuan-tts");
 const socialService = require("./social");
+const encounterStore = require("./social-encounters");
+const settingsService = require("./settings");
 const config = require("../config/ble");
 const protocol = require("../utils/yuntuan-protocol");
 const bufferUtils = require("../utils/buffer");
 
 const RECONNECT_DELAYS = [1000, 3000, 5000, 10000, 15000, 30000];
 const LAST_DEVICE_STORAGE_KEY = "yuntuan_last_ble_device";
+const SOCIAL_REGISTRATION_REFRESH_MS = 6 * 60 * 60 * 1000;
+const SOCIAL_REGISTRATION_LEEWAY_MS = 60 * 60 * 1000;
 const initialState = {
   initialized: false,
   available: false,
@@ -24,6 +28,9 @@ const initialState = {
   battery: null,
   chargingState: 255,
   socialMode: false,
+  socialReminder: true,
+  vibration: true,
+  sound: true,
   uptime: 0,
   protocolMajor: null,
   protocolMinor: null,
@@ -38,7 +45,9 @@ const initialState = {
   errorMessage: "",
   lastEventText: "",
   lastEncounterAt: 0,
+  lastEncounterId: "",
   lastEncounterText: "",
+  lastEncounterTimeEstimated: false,
   lastEncounterRssi: null,
   encounterCount: 0,
   ownSocialToken: 0,
@@ -60,7 +69,16 @@ let startupReconnectAttempted = false;
 let reconnectIndex = 0;
 let reconnectTimer = null;
 let wasConnected = false;
-let encounterResolveVersion = 0;
+let activeEncounterResolutions = Object.create(null);
+let pendingSocialAcks = [];
+let socialAckInFlight = false;
+let socialAckRetryTimer = null;
+let registeredSocialToken = 0;
+let socialRegistrationExpiresAt = 0;
+let socialRegistrationPromise = null;
+let socialRegistrationTimer = null;
+
+restoreCachedEncounterState();
 
 bleService.subscribe(handleTransportState);
 bleService.subscribeValues(handleValue);
@@ -139,6 +157,7 @@ function handleValue(result) {
     pendingRequest = null;
     clearTimeout(pending.timer);
     pending.resolve(frame);
+    scheduleSocialAckPump(0);
     return;
   }
 
@@ -174,38 +193,206 @@ function applyEvent(event) {
     return;
   }
   if (event.type === "socialEncounter") {
-    const encounteredAt = Date.now() - event.ageSeconds * 1000;
-    const resolveVersion = ++encounterResolveVersion;
-    setState({
-      lastEncounterAt: encounteredAt,
-      lastEncounterText: formatEncounterTime(encounteredAt),
-      lastEncounterRssi: event.rssi,
-      encounterCount: state.encounterCount + 1,
-      lastEventText: "附近遇到了一位云团伙伴",
-      lastEncounterProfile: null,
-      encounterProfileLoading: true,
-      encounterProfileMessage: "正在获取对方的公开名片…"
-    });
-    if (typeof wx !== "undefined" && typeof wx.showToast === "function") {
+    processSocialEncounter(event);
+  }
+}
+
+function processSocialEncounter(event) {
+  let saved;
+  try {
+    saved = encounterStore.saveEncounter(event);
+  } catch (error) {
+    // 本地没有可靠落盘时绝不能 ACK，固件会继续保留并重发。
+    setState({ errorMessage: error.message || "相遇记录保存失败" });
+    return;
+  }
+
+  enqueueSocialEncounterAck(saved.record.encounterId);
+  const displayRecord = encounterStore.toDisplayRecord(saved.record);
+  if (!saved.record.profile && saved.record.peerToken) {
+    resolveEncounterProfile(saved.record.encounterId, saved.record.peerToken);
+  }
+  applyEncounterRecord(displayRecord, !saved.duplicate);
+  const reminderSettings = settingsService.getSettings();
+  if (!saved.duplicate && reminderSettings.socialReminder && typeof wx !== "undefined") {
+    if (reminderSettings.vibration && typeof wx.vibrateShort === "function") {
+      wx.vibrateShort({ type: "light", fail() {} });
+    }
+    if (typeof wx.showToast === "function") {
       wx.showToast({ title: "遇到云团伙伴啦", icon: "none", duration: 2200 });
     }
-    socialService.resolveToken(event.peerToken)
-      .then(profile => {
-        if (resolveVersion !== encounterResolveVersion) return;
-        setState({
-          lastEncounterProfile: profile,
-          encounterProfileLoading: false,
-          encounterProfileMessage: profile ? "" : "对方暂未公开社交名片"
-        });
-      })
-      .catch(error => {
-        if (resolveVersion !== encounterResolveVersion) return;
-        setState({
-          encounterProfileLoading: false,
-          encounterProfileMessage: error.message || "对方名片暂时无法获取"
-        });
-      });
   }
+}
+
+function retryLastEncounterProfile() {
+  return retryEncounterProfile(state.lastEncounterId);
+}
+
+function retryEncounterProfile(encounterId) {
+  const record = encounterId ? encounterStore.getRecord(encounterId) : null;
+  if (!record || !record.peerToken) {
+    return Promise.reject(new Error("暂无可以重新查询的相遇名片"));
+  }
+  if (state.lastEncounterId === record.encounterId) {
+    setState({
+      lastEncounterProfile: null,
+      encounterProfileLoading: true,
+      encounterProfileMessage: "正在重新获取对方的公开名片…"
+    });
+  }
+  return resolveEncounterProfile(record.encounterId, record.peerToken);
+}
+
+function resolveEncounterProfile(encounterId, peerToken) {
+  if (activeEncounterResolutions[encounterId]) {
+    return activeEncounterResolutions[encounterId];
+  }
+  const promise = socialService.resolveToken(peerToken)
+    .then(resolution => {
+      const updated = encounterStore.markResolved(encounterId, resolution);
+      if (updated && state.lastEncounterId === encounterId) {
+        applyEncounterRecord(encounterStore.toDisplayRecord(updated), false);
+      }
+      return resolution.profile;
+    })
+    .catch(error => {
+      let updated = null;
+      try {
+        updated = encounterStore.markFailed(
+          encounterId,
+          error.message || "对方名片暂时无法获取"
+        );
+      } catch (storageError) {
+        setState({ errorMessage: storageError.message || "相遇记录更新失败" });
+      }
+      if (updated && state.lastEncounterId === encounterId) {
+        applyEncounterRecord(encounterStore.toDisplayRecord(updated), false);
+      }
+      return null;
+    })
+    .finally(() => {
+      delete activeEncounterResolutions[encounterId];
+    });
+  activeEncounterResolutions[encounterId] = promise;
+  return promise;
+}
+
+function getEncounterRecords() {
+  return encounterStore.getDisplayRecords();
+}
+
+function clearLocalPrivateState() {
+  try {
+    encounterStore.clearRecords();
+  } catch (error) {
+    console.warn("相遇记录清理失败，将继续清空全部本地存储：", error && error.message);
+  }
+  if (socialRegistrationTimer) clearTimeout(socialRegistrationTimer);
+  socialRegistrationTimer = null;
+  registeredSocialToken = 0;
+  socialRegistrationExpiresAt = 0;
+  setState({
+    lastEventText: "",
+    lastEncounterAt: 0,
+    lastEncounterId: "",
+    lastEncounterText: "",
+    lastEncounterTimeEstimated: false,
+    lastEncounterRssi: null,
+    encounterCount: 0,
+    lastEncounterProfile: null,
+    encounterProfileLoading: false,
+    encounterProfileMessage: ""
+  });
+}
+
+function applyEncounterRecord(record, isNew) {
+  if (!record) return;
+  const loading = record.status === "pending" &&
+    Boolean(activeEncounterResolutions[record.encounterId]);
+  setState({
+    lastEncounterAt: record.occurredAt,
+    lastEncounterId: record.encounterId,
+    lastEncounterText: `${formatEncounterTime(record.occurredAt)}${record.timeEstimated ? "（约）" : ""}`,
+    lastEncounterTimeEstimated: record.timeEstimated,
+    lastEncounterRssi: record.rssi,
+    encounterCount: encounterStore.getDisplayRecords().length,
+    lastEventText: isNew ? "附近遇到了一位云团伙伴" : state.lastEventText,
+    lastEncounterProfile: record.profile,
+    encounterProfileLoading: loading,
+    encounterProfileMessage: record.profile ? "" : (
+      record.errorMessage || (loading ? "正在获取对方的公开名片…" : "可以重新获取对方名片")
+    )
+  });
+}
+
+function restoreCachedEncounterState() {
+  try {
+    const latest = encounterStore.getLatestRecord();
+    if (!latest) return;
+    const record = encounterStore.toDisplayRecord(latest);
+    state = Object.assign({}, state, {
+      lastEncounterAt: record.occurredAt,
+      lastEncounterId: record.encounterId,
+      lastEncounterText: `${formatEncounterTime(record.occurredAt)}${record.timeEstimated ? "（约）" : ""}`,
+      lastEncounterTimeEstimated: record.timeEstimated,
+      lastEncounterRssi: record.rssi,
+      encounterCount: encounterStore.getDisplayRecords().length,
+      lastEncounterProfile: record.profile,
+      encounterProfileLoading: false,
+      encounterProfileMessage: record.profile ? "" : (
+        record.errorMessage || "可以重新获取对方名片"
+      )
+    });
+  } catch (error) {
+    console.warn("本地相遇记录恢复失败：", error && error.message);
+  }
+}
+
+function resumeLatestEncounterResolution() {
+  const record = encounterStore.getLatestRecord();
+  if (!record || record.profile || !record.peerToken) return Promise.resolve(null);
+  setState({
+    encounterProfileLoading: true,
+    encounterProfileMessage: "正在获取对方的公开名片…"
+  });
+  return resolveEncounterProfile(record.encounterId, record.peerToken);
+}
+
+function enqueueSocialEncounterAck(encounterId) {
+  if (!pendingSocialAcks.includes(encounterId)) pendingSocialAcks.push(encounterId);
+  scheduleSocialAckPump(0);
+}
+
+function scheduleSocialAckPump(delay) {
+  if (socialAckRetryTimer) return;
+  socialAckRetryTimer = setTimeout(() => {
+    socialAckRetryTimer = null;
+    pumpSocialEncounterAcks();
+  }, delay || 0);
+}
+
+function pumpSocialEncounterAcks() {
+  if (socialAckInFlight || !pendingSocialAcks.length) return;
+  if (!state.connected || !state.ready) return;
+  if (pendingRequest) {
+    scheduleSocialAckPump(80);
+    return;
+  }
+
+  const encounterId = pendingSocialAcks[0];
+  socialAckInFlight = true;
+  request(
+    config.COMMANDS.ACK_SOCIAL_ENCOUNTER,
+    protocol.buildEncounterAckPayload(encounterId),
+    { timeout: 1800, retries: 2 }
+  ).then(() => {
+    if (pendingSocialAcks[0] === encounterId) pendingSocialAcks.shift();
+  }).catch(error => {
+    console.warn("相遇事件 ACK 失败，等待重试：", error && error.message);
+  }).finally(() => {
+    socialAckInFlight = false;
+    if (pendingSocialAcks.length && state.connected) scheduleSocialAckPump(1200);
+  });
 }
 
 function formatEncounterTime(timestamp) {
@@ -267,9 +454,31 @@ async function loadSimulator() {
   return result({ device: toDevice() });
 }
 
+function simulateSocialEncounter(peerToken, rssi) {
+  requireReady();
+  if (!state.simulated) throw new Error("请先加载模拟挂件");
+  if (!state.socialMode) throw new Error("请先开启模拟挂件的社交模式");
+  const normalizedToken = Number(peerToken);
+  if (!Number.isInteger(normalizedToken) || normalizedToken <= 0 || normalizedToken > 0xFFFFFFFF) {
+    throw new Error("对方模拟 Token 格式不正确");
+  }
+  if ((normalizedToken >>> 0) === (state.ownSocialToken >>> 0)) {
+    throw new Error("不能模拟遇见当前挂件自己");
+  }
+  bleService.emitSimulatorSocialEncounter(normalizedToken >>> 0, Number(rssi) || -55);
+  return Promise.resolve(result({ device: toDevice() }));
+}
+
 async function initializeConnectedDevice() {
   const transport = bleService.getState();
   assertRequiredGatt(transport.services);
+
+  // 18 字节相遇 payload 加 10 字节控制帧开销，共 28 字节；ATT Notify
+  // 还需要 3 字节头，因此必须在订阅 Event TX 前把 MTU 协商到至少 31。
+  const controlMtu = await bleService.negotiateMTU(247, "write");
+  if (controlMtu < config.controlMinMTU) {
+    throw new Error(`当前 BLE MTU ${controlMtu} 过低，可靠相遇事件至少需要 ${config.controlMinMTU}`);
+  }
 
   await bleService.setCharacteristicNotify(
     config.UUIDS.controlService,
@@ -307,22 +516,76 @@ async function initializeConnectedDevice() {
   validateProtocolInfo(hello);
   setState(hello);
 
+  if (protocol.hasCapability(info.capabilities, config.capabilities.timeSync)) {
+    await request(
+      config.COMMANDS.SET_TIME,
+      protocol.buildUint32Payload(Math.floor(Date.now() / 1000))
+    );
+  }
+
   await getStatus();
+  if (protocol.hasCapability(info.capabilities, config.capabilities.alertSettings)) {
+    const savedSettings = settingsService.getSettings();
+    const settingsResponse = await request(
+      config.COMMANDS.SET_ALERT_SETTINGS,
+      protocol.buildAlertSettingsPayload(savedSettings)
+    );
+    setState(protocol.parseAlertSettingsData(settingsResponse.data));
+  }
   if (protocol.hasCapability(info.capabilities, config.capabilities.socialEncounter)) {
     const tokenResponse = await request(config.COMMANDS.GET_SOCIAL_TOKEN);
     if (tokenResponse.data.length !== 4) throw new Error("挂件匿名令牌长度不正确");
     setState({ ownSocialToken: protocol.readUint32LE(tokenResponse.data, 0) });
   }
   setState({ connecting: false, connected: true, ready: true, statusText: "设备已就绪", errorMessage: "" });
-  refreshSocialRegistration().catch(error => {
+  scheduleSocialAckPump(0);
+  resumeLatestEncounterResolution().catch(() => {});
+  refreshSocialRegistration(true).catch(error => {
     console.warn("社交匿名令牌登记失败：", error && error.message);
   });
 }
 
-async function refreshSocialRegistration() {
+async function refreshSocialRegistration(force) {
   if (!state.connected || !state.ownSocialToken) return { registered: false };
-  const result = await socialService.registerToken(state.ownSocialToken);
-  return Object.assign({ registered: true }, result);
+  const now = Date.now();
+  if (!force && registeredSocialToken === state.ownSocialToken &&
+      socialRegistrationExpiresAt - now > SOCIAL_REGISTRATION_LEEWAY_MS) {
+    return { registered: true, expiresAt: socialRegistrationExpiresAt, cached: true };
+  }
+  if (socialRegistrationPromise) return socialRegistrationPromise;
+
+  const token = state.ownSocialToken;
+  socialRegistrationPromise = socialService.registerToken(token)
+    .then(result => {
+      registeredSocialToken = token;
+      socialRegistrationExpiresAt = Number(result.expiresAt) || 0;
+      scheduleSocialRegistrationRefresh();
+      return Object.assign({ registered: true }, result);
+    })
+    .finally(() => {
+      socialRegistrationPromise = null;
+    });
+  return socialRegistrationPromise;
+}
+
+function scheduleSocialRegistrationRefresh() {
+  if (socialRegistrationTimer) clearTimeout(socialRegistrationTimer);
+  socialRegistrationTimer = null;
+  if (!state.connected || !socialRegistrationExpiresAt) return;
+  const untilRefresh = Math.max(
+    60 * 1000,
+    Math.min(
+      SOCIAL_REGISTRATION_REFRESH_MS,
+      socialRegistrationExpiresAt - Date.now() - SOCIAL_REGISTRATION_LEEWAY_MS
+    )
+  );
+  socialRegistrationTimer = setTimeout(() => {
+    socialRegistrationTimer = null;
+    refreshSocialRegistration(true).catch(error => {
+      console.warn("社交匿名令牌自动续期失败：", error && error.message);
+      scheduleSocialRegistrationRefresh();
+    });
+  }, untilRefresh);
 }
 
 async function readStandardDeviceInformation(services) {
@@ -380,6 +643,21 @@ async function setSocialMode(enabled) {
   return result({ device: toDevice() });
 }
 
+async function setAlertSettings(value) {
+  requireReady();
+  if (!protocol.hasCapability(state.capabilities, config.capabilities.alertSettings)) {
+    throw new Error("当前挂件不支持提醒设置");
+  }
+  const settings = settingsService.normalizeSettings(value);
+  const response = await request(
+    config.COMMANDS.SET_ALERT_SETTINGS,
+    protocol.buildAlertSettingsPayload(settings)
+  );
+  const applied = protocol.parseAlertSettingsData(response.data);
+  setState(applied);
+  return result({ settings: applied, device: toDevice() });
+}
+
 async function findDevice(alertType, duration) {
   requireReady();
   if (!protocol.hasCapability(state.capabilities, config.capabilities.findDevice)) {
@@ -387,7 +665,10 @@ async function findDevice(alertType, duration) {
   }
   await request(
     config.COMMANDS.FIND_DEVICE,
-    protocol.buildFindDevicePayload(alertType === undefined ? 0 : alertType, duration || 1500),
+    protocol.buildFindDevicePayload(
+      alertType === undefined ? settingsService.getAlertType(settingsService.getSettings()) : alertType,
+      duration || 1500
+    ),
     { timeout: 3000, retries: 1 }
   );
   setState({ lastEventText: "挂件正在震动、响铃并闪灯" });
@@ -617,7 +898,33 @@ function rejectMatchingValueWaiters(characteristicId, error) {
 }
 
 function resetConnectionState(statusText) {
-  setState(Object.assign({}, initialState, {
+  if (socialRegistrationTimer) clearTimeout(socialRegistrationTimer);
+  socialRegistrationTimer = null;
+  registeredSocialToken = 0;
+  socialRegistrationExpiresAt = 0;
+  let encounterPatch = {};
+  try {
+    const latest = encounterStore.getLatestRecord();
+    const record = latest ? encounterStore.toDisplayRecord(latest) : null;
+    if (record) {
+      encounterPatch = {
+        lastEncounterAt: record.occurredAt,
+        lastEncounterId: record.encounterId,
+        lastEncounterText: `${formatEncounterTime(record.occurredAt)}${record.timeEstimated ? "（约）" : ""}`,
+        lastEncounterTimeEstimated: record.timeEstimated,
+        lastEncounterRssi: record.rssi,
+        encounterCount: encounterStore.getDisplayRecords().length,
+        lastEncounterProfile: record.profile,
+        encounterProfileLoading: false,
+        encounterProfileMessage: record.profile ? "" : (
+          record.errorMessage || "可以重新获取对方名片"
+        )
+      };
+    }
+  } catch (error) {
+    console.warn("断开连接后恢复相遇记录失败：", error && error.message);
+  }
+  setState(Object.assign({}, initialState, encounterPatch, {
     initialized: state.initialized,
     available: state.available,
     devices: state.devices,
@@ -676,6 +983,9 @@ function toDevice() {
     battery: state.battery,
     chargingState: state.chargingState,
     socialMode: state.socialMode,
+    socialReminder: state.socialReminder,
+    vibration: state.vibration,
+    sound: state.sound,
     uptime: state.uptime,
     protocolMajor: state.protocolMajor,
     protocolMinor: state.protocolMinor,
@@ -690,12 +1000,15 @@ function toDevice() {
     errorMessage: state.errorMessage,
     lastEventText: state.lastEventText,
     lastEncounterAt: state.lastEncounterAt,
+    lastEncounterId: state.lastEncounterId,
     lastEncounterText: state.lastEncounterText,
+    lastEncounterTimeEstimated: state.lastEncounterTimeEstimated,
     lastEncounterRssi: state.lastEncounterRssi,
     encounterCount: state.encounterCount,
     lastEncounterProfile: state.lastEncounterProfile,
     encounterProfileLoading: state.encounterProfileLoading,
-    encounterProfileMessage: state.encounterProfileMessage
+    encounterProfileMessage: state.encounterProfileMessage,
+    ownSocialToken: state.ownSocialToken >>> 0
   };
 }
 
@@ -727,15 +1040,21 @@ module.exports = {
   connectDevice,
   reconnectLastDevice,
   loadSimulator,
+  simulateSocialEncounter,
   disconnectDevice,
   getDevice,
   getHomeOverview,
   getStatus,
   setSocialMode,
+  setAlertSettings,
   findDevice,
   setTime,
   ping,
   refreshSocialRegistration,
+  retryLastEncounterProfile,
+  retryEncounterProfile,
+  getEncounterRecords,
+  clearLocalPrivateState,
   getState,
   subscribe
 };

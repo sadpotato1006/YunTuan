@@ -2,11 +2,22 @@ const config = require("../config/ble");
 const protocol = require("../utils/yuntuan-protocol");
 
 const UUIDS = Object.assign({ status: config.UUIDS.protocolInfo }, config.UUIDS);
+const SOCIAL_TOKEN_STORAGE_KEY = "yuntuan_simulator_social_token";
+const SIMULATOR_CAPABILITIES = config.capabilities.battery |
+  config.capabilities.socialMode |
+  config.capabilities.findDevice |
+  config.capabilities.buttonEvent |
+  config.capabilities.chargingState |
+  config.capabilities.timeSync |
+  config.capabilities.socialEncounter |
+  config.capabilities.alertSettings;
 const startedAt = Date.now();
 let battery = 78;
 let chargingState = 1;
 let socialMode = true;
-const socialToken = 0x53494D31;
+let alertSettings = { socialReminder: true, vibration: true, sound: true };
+let memorySocialToken = 0;
+let encounterSequence = 0;
 
 function createServices() {
   return [
@@ -75,9 +86,9 @@ function readValue(characteristicId) {
   const normalized = normalize(characteristicId);
   if (same(normalized, UUIDS.batteryLevel)) return new Uint8Array([78]).buffer;
   if (same(normalized, UUIDS.modelNumber)) return asciiToBuffer("YT-SIM-01");
-  if (same(normalized, UUIDS.firmwareRevision)) return asciiToBuffer("0.2.0");
+  if (same(normalized, UUIDS.firmwareRevision)) return asciiToBuffer("0.7.0");
   if (same(normalized, UUIDS.hardwareRevision)) return asciiToBuffer("SIM-A1");
-  if (same(normalized, UUIDS.protocolInfo)) return new Uint8Array([1, 5, 0x1F, 0x07, 0, 0]).buffer;
+  if (same(normalized, UUIDS.protocolInfo)) return protocolInfoBytes().buffer;
   throw new Error("这个模拟特征值没有可读取数据");
 }
 
@@ -89,7 +100,7 @@ function createWriteResponse(value) {
 
   if (request.command === config.COMMANDS.HELLO) {
     if (request.payload.length) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
-    data = new Uint8Array([1, 5, 0x1F, 0x07, 0, 0]);
+    data = protocolInfoBytes();
   } else if (request.command === config.COMMANDS.GET_STATUS) {
     if (request.payload.length) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
     data = createStatusData();
@@ -111,7 +122,17 @@ function createWriteResponse(value) {
     if (request.payload.length) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
     else {
       data = new Uint8Array(4);
-      protocol.writeUint32LE(data, 0, socialToken);
+      protocol.writeUint32LE(data, 0, getSocialToken());
+    }
+  } else if (request.command === config.COMMANDS.ACK_SOCIAL_ENCOUNTER) {
+    if (request.payload.length !== 8) statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
+    else data = new Uint8Array([0]);
+  } else if (request.command === config.COMMANDS.SET_ALERT_SETTINGS) {
+    try {
+      alertSettings = protocol.parseAlertSettingsData(request.payload);
+      data = protocol.buildAlertSettingsPayload(alertSettings);
+    } catch (error) {
+      statusCode = config.STATUS_CODES.INVALID_PAYLOAD;
     }
   } else {
     statusCode = config.STATUS_CODES.UNKNOWN_COMMAND;
@@ -133,6 +154,82 @@ function createNotifyValue(characteristicId) {
     );
   }
   return readValue(characteristicId);
+}
+
+function createSocialEncounterValue(peerTokenValue, rssiValue) {
+  const peerToken = normalizeToken(peerTokenValue);
+  if (peerToken === getSocialToken()) throw new Error("不能模拟遇见当前挂件自己");
+  const rssi = Number.isInteger(Number(rssiValue))
+    ? Math.max(-127, Math.min(20, Number(rssiValue)))
+    : -55;
+  const payload = new Uint8Array(18);
+  payload.set(createEncounterId(), 0);
+  protocol.writeUint32LE(payload, 8, peerToken);
+  payload[12] = rssi & 0xFF;
+  protocol.writeUint32LE(payload, 13, Math.floor(Date.now() / 1000));
+  payload[17] = 0x01;
+  return protocol.createEvent(config.COMMANDS.SOCIAL_ENCOUNTER, payload);
+}
+
+function getSocialToken() {
+  if (memorySocialToken) return memorySocialToken;
+  if (typeof wx !== "undefined" && typeof wx.getStorageSync === "function") {
+    const saved = Number(wx.getStorageSync(SOCIAL_TOKEN_STORAGE_KEY));
+    if (isValidToken(saved)) {
+      memorySocialToken = saved >>> 0;
+      return memorySocialToken;
+    }
+  }
+  memorySocialToken = generateSocialToken();
+  if (typeof wx !== "undefined" && typeof wx.setStorageSync === "function") {
+    try { wx.setStorageSync(SOCIAL_TOKEN_STORAGE_KEY, memorySocialToken); }
+    catch (error) { console.warn("模拟挂件 Token 保存失败：", error && error.message); }
+  }
+  return memorySocialToken;
+}
+
+function generateSocialToken() {
+  let token = 0;
+  while (!token) {
+    const randomHigh = Math.floor(Math.random() * 0x10000);
+    const randomLow = Math.floor(Math.random() * 0x10000);
+    token = ((randomHigh << 16) | randomLow) >>> 0;
+  }
+  return token;
+}
+
+function normalizeToken(value) {
+  const token = Number(value);
+  if (!isValidToken(token)) throw new Error("对方模拟 Token 格式不正确");
+  return token >>> 0;
+}
+
+function isValidToken(value) {
+  return Number.isInteger(value) && value > 0 && value <= 0xFFFFFFFF;
+}
+
+function createEncounterId() {
+  encounterSequence = (encounterSequence + 1) & 0xFFFF;
+  const bytes = new Uint8Array(8);
+  let timestamp = Date.now();
+  for (let index = 0; index < 6; index += 1) {
+    bytes[index] = timestamp % 256;
+    timestamp = Math.floor(timestamp / 256);
+  }
+  bytes[6] = encounterSequence & 0xFF;
+  bytes[7] = (encounterSequence >>> 8) & 0xFF;
+  return bytes;
+}
+
+function protocolInfoBytes() {
+  return new Uint8Array([
+    config.protocolMajor,
+    config.protocolMinor,
+    SIMULATOR_CAPABILITIES & 0xFF,
+    (SIMULATOR_CAPABILITIES >>> 8) & 0xFF,
+    0,
+    0
+  ]);
 }
 
 function createStatusData() {
@@ -160,8 +257,11 @@ function same(first, second) {
 
 module.exports = {
   UUIDS,
+  SIMULATOR_CAPABILITIES,
   createServices,
   readValue,
   createNotifyValue,
-  createWriteResponse
+  createWriteResponse,
+  createSocialEncounterValue,
+  getSocialToken
 };

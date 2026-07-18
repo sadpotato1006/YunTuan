@@ -4,7 +4,12 @@
     "pages/chat/chat",
     "pages/ble-debug/ble-debug",
     "pages/device/device",
+    "pages/device-lab/device-lab",
     "pages/emotion/emotion",
+    "pages/encounters/encounters",
+    "pages/partners/partners",
+    "pages/social-chat/social-chat",
+    "pages/social-contact/social-contact",
     "pages/social-profile/social-profile",
     "pages/settings/settings"
   ],
@@ -28,8 +33,9 @@
     "list": [
       { "pagePath": "pages/home/home", "text": "首页" },
       { "pagePath": "pages/device/device", "text": "设备" },
-      { "pagePath": "pages/emotion/emotion", "text": "情绪" },
-      { "pagePath": "pages/settings/settings", "text": "设置" }
+      { "pagePath": "pages/partners/partners", "text": "伙伴" },
+      { "pagePath": "pages/emotion/emotion", "text": "心情" },
+      { "pagePath": "pages/settings/settings", "text": "我的" }
     ]
   },
   "style": "v2",

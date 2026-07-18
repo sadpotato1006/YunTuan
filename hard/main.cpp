@@ -8,6 +8,7 @@
 #include <driver/i2s.h>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
+#include <stddef.h>
 
 // =============================================================================
 // 1. UUID 定义
@@ -15,7 +16,7 @@
 #define DEVICE_SN                 "YT01260000000001"
 #define DEVICE_NAME               "YT-000001"
 #define MODEL_NUMBER              "YT-P01"
-#define FIRMWARE_REVISION         "0.5.6"
+#define FIRMWARE_REVISION         "0.7.0"
 #define HARDWARE_REVISION         "A1"
 
 #define BATTERY_SERVICE_UUID      "0000180F-0000-1000-8000-00805F9B34FB"
@@ -47,10 +48,10 @@
 // =============================================================================
 #define FRAME_SOF                 0xA5
 #define FRAME_VERSION             0x01
-#define FRAME_MAX_LEN             20
+#define FRAME_MAX_LEN             28
 #define FRAME_HEADER_LEN          8
 #define FRAME_OVERHEAD            10            // SOF(1)+Header(7)+CRC(2)
-#define PAYLOAD_MAX               10
+#define PAYLOAD_MAX               18
 
 // Flags (§7.2)
 #define FLAG_REQUEST              0x00
@@ -66,6 +67,8 @@
 #define CMD_SET_TIME              0x05
 #define CMD_PING                  0x06
 #define CMD_GET_SOCIAL_TOKEN      0x07
+#define CMD_ACK_SOCIAL_ENCOUNTER  0x08
+#define CMD_SET_ALERT_SETTINGS    0x09
 
 // Event commands (§10)
 #define EVT_STATUS_CHANGED        0x20
@@ -89,8 +92,8 @@
 
 // Protocol Info (§5.4)
 #define PROTOCOL_MAJOR            1
-#define PROTOCOL_MINOR            5
-#define CAPABILITIES              0x071F        // Control v1.5 + Audio + anonymous social lookup
+#define PROTOCOL_MINOR            7
+#define CAPABILITIES              0x0F3F        // Control v1.7 + persistent alert settings
 #define SECURITY_MODE             0             // 实验室模式
 
 // Capability bits (§5.4)
@@ -105,6 +108,7 @@
 #define CAP_AUDIO_UPLOAD          8
 #define CAP_AUDIO_PLAYBACK        9
 #define CAP_SOCIAL_ENCOUNTER      10
+#define CAP_ALERT_SETTINGS        11
 
 // Button types (§10)
 #define BTN_CLICK                 1
@@ -206,7 +210,12 @@
 #define SOCIAL_SCAN_INTERVAL_MS            300
 #define SOCIAL_SCAN_WINDOW_MS              60
 #define SOCIAL_ALERT_DURATION_MS           500
-#define SOCIAL_EVENT_QUEUE_CAPACITY        4
+#define SOCIAL_EVENT_QUEUE_CAPACITY        20
+#define SOCIAL_EVENT_RETRY_BASE_MS         1500UL
+#define SOCIAL_EVENT_RETRY_MAX_MS          30000UL
+#define SOCIAL_EVENT_FLAG_TIME_VALID       0x01
+#define SOCIAL_QUEUE_MAGIC                 0x59545132UL  // "YTQ2"
+#define SOCIAL_QUEUE_VERSION               2
 
 // =============================================================================
 // 4. CRC16-CCITT-FALSE (§7.4)
@@ -231,6 +240,9 @@ static uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
 // 5. 全局状态
 // =============================================================================
 static uint8_t  g_socialMode    = 0;
+static bool     g_socialReminderEnabled = true;
+static bool     g_vibrationEnabled = true;
+static bool     g_soundEnabled = true;
 static uint8_t  g_bindState     = 0;           // 0=未绑定
 static uint8_t  g_batteryLevel  = 100;
 static uint8_t  g_chargingState = 0;           // 0=未充电 1=充电中 2=已充满 255=未知
@@ -276,15 +288,44 @@ static volatile int8_t g_socialAlertRssi = -127;
 static volatile uint32_t g_socialAlertQueuedAt = 0;
 
 struct SocialEncounterEvent {
+    uint32_t eventBootId;
+    uint32_t eventSequence;
     uint32_t token;
-    uint32_t detectedAt;
+    uint32_t occurredAt;
     int8_t rssi;
+    uint8_t flags;
+    uint16_t reserved;
 };
 
-static SocialEncounterEvent g_socialEventQueue[SOCIAL_EVENT_QUEUE_CAPACITY] = {};
-static uint8_t g_socialEventHead = 0;
-static uint8_t g_socialEventCount = 0;
+struct SocialEncounterQueueStore {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t structSize;
+    uint32_t generation;
+    uint32_t droppedCount;
+    uint8_t head;
+    uint8_t count;
+    uint16_t reserved;
+    SocialEncounterEvent entries[SOCIAL_EVENT_QUEUE_CAPACITY];
+    uint16_t crc16;
+};
+
+static SocialEncounterQueueStore g_socialEventQueue = {};
 static portMUX_TYPE g_socialEventMux = portMUX_INITIALIZER_UNLOCKED;
+static bool g_preferencesReady = false;
+static char g_socialQueueActiveSlot = 0;
+static uint32_t g_socialQueuePersistedGeneration = 0;
+static uint32_t g_socialEncounterBootId = 0;
+static uint32_t g_socialEncounterSequence = 0;
+static volatile bool g_socialEncounterAwaitingAck = false;
+static uint32_t g_socialEncounterAwaitingBootId = 0;
+static uint32_t g_socialEncounterAwaitingSequence = 0;
+static uint32_t g_socialEncounterLastSendAt = 0;
+static volatile uint8_t g_socialEncounterSendAttempts = 0;
+
+static bool g_timeSynced = false;
+static uint32_t g_timeBaseUnix = 0;
+static uint32_t g_timeBaseMillis = 0;
 
 static void requestInteractionBeaconRefresh();
 static void startFindDeviceAlert(uint8_t alertType, uint16_t duration);
@@ -481,7 +522,10 @@ static bool sendEvent(uint8_t evtCmd, const uint8_t* payload, uint8_t payloadLen
 
     uint8_t frame[FRAME_MAX_LEN];
     uint8_t frameLen = buildFrame(FLAG_EVENT, evtCmd, 0, payload, payloadLen, frame);
-    pEventTx->notify(frame, frameLen);
+    if (!pEventTx->notify(frame, frameLen)) {
+        Serial.println("  [WARN] Event notify was not queued");
+        return false;
+    }
 
     Serial.print("  TX EVENT cmd=0x");
     Serial.print(evtCmd, HEX);
@@ -495,46 +539,206 @@ static bool sendEvent(uint8_t evtCmd, const uint8_t* payload, uint8_t payloadLen
     return true;
 }
 
-static void queueSocialEncounterEvent(uint32_t token, int8_t rssi, uint32_t detectedAt) {
-    portENTER_CRITICAL(&g_socialEventMux);
-    if (g_socialEventCount == SOCIAL_EVENT_QUEUE_CAPACITY) {
-        g_socialEventHead = (g_socialEventHead + 1) % SOCIAL_EVENT_QUEUE_CAPACITY;
-        g_socialEventCount--;
+static uint32_t currentUnixTime(uint32_t now) {
+    if (!g_timeSynced) return 0;
+    return g_timeBaseUnix + (uint32_t)(now - g_timeBaseMillis) / 1000UL;
+}
+
+static void resetSocialEncounterQueue(SocialEncounterQueueStore* queue) {
+    memset(queue, 0, sizeof(*queue));
+    queue->magic = SOCIAL_QUEUE_MAGIC;
+    queue->version = SOCIAL_QUEUE_VERSION;
+    queue->structSize = sizeof(SocialEncounterQueueStore);
+    queue->generation = 1;
+}
+
+static uint16_t calculateSocialQueueCrc(const SocialEncounterQueueStore& queue) {
+    return crc16_ccitt(
+        reinterpret_cast<const uint8_t*>(&queue),
+        offsetof(SocialEncounterQueueStore, crc16)
+    );
+}
+
+static bool validateSocialEncounterQueue(const SocialEncounterQueueStore& queue) {
+    return queue.magic == SOCIAL_QUEUE_MAGIC &&
+        queue.version == SOCIAL_QUEUE_VERSION &&
+        queue.structSize == sizeof(SocialEncounterQueueStore) &&
+        queue.head < SOCIAL_EVENT_QUEUE_CAPACITY &&
+        queue.count <= SOCIAL_EVENT_QUEUE_CAPACITY &&
+        queue.crc16 == calculateSocialQueueCrc(queue);
+}
+
+static bool loadSocialQueueSlot(const char* key, SocialEncounterQueueStore* queue) {
+    if (!g_preferencesReady || g_preferences.getBytesLength(key) != sizeof(*queue)) return false;
+    if (g_preferences.getBytes(key, queue, sizeof(*queue)) != sizeof(*queue)) return false;
+    return validateSocialEncounterQueue(*queue);
+}
+
+static bool generationIsNewer(uint32_t first, uint32_t second) {
+    return (int32_t)(first - second) > 0;
+}
+
+static void loadSocialEncounterQueue() {
+    SocialEncounterQueueStore first = {};
+    SocialEncounterQueueStore second = {};
+    const bool firstValid = loadSocialQueueSlot("encq_a", &first);
+    const bool secondValid = loadSocialQueueSlot("encq_b", &second);
+
+    if (firstValid && (!secondValid || generationIsNewer(first.generation, second.generation))) {
+        g_socialEventQueue = first;
+        g_socialQueueActiveSlot = 'a';
+    } else if (secondValid) {
+        g_socialEventQueue = second;
+        g_socialQueueActiveSlot = 'b';
+    } else {
+        resetSocialEncounterQueue(&g_socialEventQueue);
+        g_socialQueueActiveSlot = 0;
     }
-    uint8_t tail = (g_socialEventHead + g_socialEventCount) % SOCIAL_EVENT_QUEUE_CAPACITY;
-    g_socialEventQueue[tail] = { token, detectedAt, rssi };
-    g_socialEventCount++;
+    g_socialQueuePersistedGeneration = (firstValid || secondValid)
+        ? g_socialEventQueue.generation
+        : 0;
+
+    Serial.print("  Social encounter queue restored: ");
+    Serial.print(g_socialEventQueue.count);
+    Serial.print(" pending, ");
+    Serial.print(g_socialEventQueue.droppedCount);
+    Serial.println(" dropped");
+}
+
+static bool persistSocialEncounterQueue() {
+    if (!g_preferencesReady) return true;
+
+    SocialEncounterQueueStore snapshot = {};
+    portENTER_CRITICAL(&g_socialEventMux);
+    if (g_socialQueuePersistedGeneration == g_socialEventQueue.generation) {
+        portEXIT_CRITICAL(&g_socialEventMux);
+        return true;
+    }
+    snapshot = g_socialEventQueue;
+    portEXIT_CRITICAL(&g_socialEventMux);
+
+    snapshot.crc16 = calculateSocialQueueCrc(snapshot);
+    const char* key = g_socialQueueActiveSlot == 'a' ? "encq_b" : "encq_a";
+    if (g_preferences.putBytes(key, &snapshot, sizeof(snapshot)) != sizeof(snapshot)) {
+        Serial.println("  [WARN] Failed to persist social encounter queue");
+        return false;
+    }
+    g_socialQueueActiveSlot = key[5];
+    g_socialQueuePersistedGeneration = snapshot.generation;
+    return true;
+}
+
+static void queueSocialEncounterEvent(uint32_t token, int8_t rssi, uint32_t detectedAt) {
+    SocialEncounterEvent encounter = {};
+    encounter.eventBootId = g_socialEncounterBootId;
+    encounter.eventSequence = ++g_socialEncounterSequence;
+    if (encounter.eventSequence == 0) encounter.eventSequence = ++g_socialEncounterSequence;
+    encounter.token = token;
+    encounter.occurredAt = currentUnixTime(detectedAt);
+    encounter.rssi = rssi;
+    encounter.flags = encounter.occurredAt ? SOCIAL_EVENT_FLAG_TIME_VALID : 0;
+
+    portENTER_CRITICAL(&g_socialEventMux);
+    if (g_socialEventQueue.count == SOCIAL_EVENT_QUEUE_CAPACITY) {
+        g_socialEventQueue.head =
+            (g_socialEventQueue.head + 1) % SOCIAL_EVENT_QUEUE_CAPACITY;
+        g_socialEventQueue.count--;
+        g_socialEventQueue.droppedCount++;
+        g_socialEncounterAwaitingAck = false;
+    }
+    const uint8_t tail =
+        (g_socialEventQueue.head + g_socialEventQueue.count) % SOCIAL_EVENT_QUEUE_CAPACITY;
+    g_socialEventQueue.entries[tail] = encounter;
+    g_socialEventQueue.count++;
+    g_socialEventQueue.generation++;
     portEXIT_CRITICAL(&g_socialEventMux);
 }
 
+static uint8_t acknowledgeSocialEncounter(uint32_t eventBootId, uint32_t eventSequence) {
+    uint8_t remaining = 0;
+    portENTER_CRITICAL(&g_socialEventMux);
+    if (g_socialEventQueue.count > 0) {
+        const SocialEncounterEvent& head =
+            g_socialEventQueue.entries[g_socialEventQueue.head];
+        if (head.eventBootId == eventBootId && head.eventSequence == eventSequence) {
+            memset(
+                &g_socialEventQueue.entries[g_socialEventQueue.head],
+                0,
+                sizeof(SocialEncounterEvent)
+            );
+            g_socialEventQueue.head =
+                (g_socialEventQueue.head + 1) % SOCIAL_EVENT_QUEUE_CAPACITY;
+            g_socialEventQueue.count--;
+            g_socialEventQueue.generation++;
+            g_socialEncounterAwaitingAck = false;
+            g_socialEncounterSendAttempts = 0;
+        }
+    }
+    remaining = g_socialEventQueue.count;
+    portEXIT_CRITICAL(&g_socialEventMux);
+    return remaining;
+}
+
+static uint32_t socialEncounterRetryDelay() {
+    if (g_socialEncounterSendAttempts == 0) return 0;
+    uint8_t shift = g_socialEncounterSendAttempts - 1;
+    if (shift > 4) shift = 4;
+    uint32_t delayMs = SOCIAL_EVENT_RETRY_BASE_MS << shift;
+    return delayMs > SOCIAL_EVENT_RETRY_MAX_MS ? SOCIAL_EVENT_RETRY_MAX_MS : delayMs;
+}
+
 static void pollSocialEncounterEvents(uint32_t now) {
+    if (!persistSocialEncounterQueue()) return;
     if (!g_connected || !g_eventTxSubscribed || !pEventTx) return;
 
     SocialEncounterEvent encounter = {};
     bool hasEvent = false;
     portENTER_CRITICAL(&g_socialEventMux);
-    if (g_socialEventCount > 0) {
-        encounter = g_socialEventQueue[g_socialEventHead];
-        g_socialEventHead = (g_socialEventHead + 1) % SOCIAL_EVENT_QUEUE_CAPACITY;
-        g_socialEventCount--;
+    if (g_socialEventQueue.count > 0) {
+        encounter = g_socialEventQueue.entries[g_socialEventQueue.head];
         hasEvent = true;
     }
     portEXIT_CRITICAL(&g_socialEventMux);
-    if (!hasEvent) return;
+    if (!hasEvent) {
+        g_socialEncounterAwaitingAck = false;
+        g_socialEncounterSendAttempts = 0;
+        return;
+    }
 
-    uint32_t ageSeconds = (now - encounter.detectedAt) / 1000;
-    uint8_t payload[9];
-    payload[0] = (uint8_t)(encounter.token & 0xFF);
-    payload[1] = (uint8_t)((encounter.token >> 8) & 0xFF);
-    payload[2] = (uint8_t)((encounter.token >> 16) & 0xFF);
-    payload[3] = (uint8_t)((encounter.token >> 24) & 0xFF);
-    payload[4] = (uint8_t)encounter.rssi;
-    payload[5] = (uint8_t)(ageSeconds & 0xFF);
-    payload[6] = (uint8_t)((ageSeconds >> 8) & 0xFF);
-    payload[7] = (uint8_t)((ageSeconds >> 16) & 0xFF);
-    payload[8] = (uint8_t)((ageSeconds >> 24) & 0xFF);
-    if (!sendEvent(EVT_SOCIAL_ENCOUNTER, payload, sizeof(payload))) {
-        queueSocialEncounterEvent(encounter.token, encounter.rssi, encounter.detectedAt);
+    if (g_socialEncounterAwaitingAck &&
+        (g_socialEncounterAwaitingBootId != encounter.eventBootId ||
+         g_socialEncounterAwaitingSequence != encounter.eventSequence)) {
+        g_socialEncounterAwaitingAck = false;
+        g_socialEncounterSendAttempts = 0;
+    }
+    if (g_socialEncounterAwaitingAck &&
+        now - g_socialEncounterLastSendAt < socialEncounterRetryDelay()) return;
+
+    uint8_t payload[18];
+    payload[0] = (uint8_t)(encounter.eventBootId & 0xFF);
+    payload[1] = (uint8_t)((encounter.eventBootId >> 8) & 0xFF);
+    payload[2] = (uint8_t)((encounter.eventBootId >> 16) & 0xFF);
+    payload[3] = (uint8_t)((encounter.eventBootId >> 24) & 0xFF);
+    payload[4] = (uint8_t)(encounter.eventSequence & 0xFF);
+    payload[5] = (uint8_t)((encounter.eventSequence >> 8) & 0xFF);
+    payload[6] = (uint8_t)((encounter.eventSequence >> 16) & 0xFF);
+    payload[7] = (uint8_t)((encounter.eventSequence >> 24) & 0xFF);
+    payload[8] = (uint8_t)(encounter.token & 0xFF);
+    payload[9] = (uint8_t)((encounter.token >> 8) & 0xFF);
+    payload[10] = (uint8_t)((encounter.token >> 16) & 0xFF);
+    payload[11] = (uint8_t)((encounter.token >> 24) & 0xFF);
+    payload[12] = (uint8_t)encounter.rssi;
+    payload[13] = (uint8_t)(encounter.occurredAt & 0xFF);
+    payload[14] = (uint8_t)((encounter.occurredAt >> 8) & 0xFF);
+    payload[15] = (uint8_t)((encounter.occurredAt >> 16) & 0xFF);
+    payload[16] = (uint8_t)((encounter.occurredAt >> 24) & 0xFF);
+    payload[17] = encounter.flags;
+    if (sendEvent(EVT_SOCIAL_ENCOUNTER, payload, sizeof(payload))) {
+        g_socialEncounterAwaitingAck = true;
+        g_socialEncounterAwaitingBootId = encounter.eventBootId;
+        g_socialEncounterAwaitingSequence = encounter.eventSequence;
+        g_socialEncounterLastSendAt = now;
+        if (g_socialEncounterSendAttempts < 255) g_socialEncounterSendAttempts++;
     }
 }
 
@@ -631,6 +835,30 @@ static void handleSetSocialMode(uint8_t seq, const uint8_t* payload, uint8_t len
     Serial.println(g_socialMode);
 }
 
+// SET_ALERT_SETTINGS 0x09 — 持久化社交提醒、振动和声音策略
+static void handleSetAlertSettings(uint8_t seq, const uint8_t* payload, uint8_t len) {
+    if (len != 3 || payload[0] > 1 || payload[1] > 1 || payload[2] > 1) {
+        sendResponse(CMD_SET_ALERT_SETTINGS, seq, STATUS_INVALID_PAYLOAD, nullptr, 0);
+        return;
+    }
+    g_socialReminderEnabled = payload[0] != 0;
+    g_vibrationEnabled = payload[1] != 0;
+    g_soundEnabled = payload[2] != 0;
+    if (g_preferencesReady) {
+        g_preferences.putBool("socialAlert", g_socialReminderEnabled);
+        g_preferences.putBool("vibration", g_vibrationEnabled);
+        g_preferences.putBool("sound", g_soundEnabled);
+    }
+    uint8_t result[3] = {
+        g_socialReminderEnabled ? (uint8_t)1 : (uint8_t)0,
+        g_vibrationEnabled ? (uint8_t)1 : (uint8_t)0,
+        g_soundEnabled ? (uint8_t)1 : (uint8_t)0
+    };
+    sendResponse(CMD_SET_ALERT_SETTINGS, seq, STATUS_OK, result, 3);
+    Serial.printf("  Alert settings: social=%u vibration=%u sound=%u\n",
+        result[0], result[1], result[2]);
+}
+
 static void stopFindDeviceAlert() {
     if (!g_alertActive) return;
     g_alertActive = false;
@@ -701,7 +929,7 @@ static void handleFindDevice(uint8_t seq, const uint8_t* payload, uint8_t len) {
     uint8_t  alertType = payload[0];
     uint16_t duration  = payload[1] | ((uint16_t)payload[2] << 8);
 
-    if (alertType > 2 || duration < 500 || duration > 10000) {
+    if (alertType > 3 || duration < 500 || duration > 10000) {
         sendResponse(CMD_FIND_DEVICE, seq, STATUS_INVALID_PAYLOAD, nullptr, 0);
         return;
     }
@@ -904,7 +1132,7 @@ static void pollSocialInteraction(uint32_t now) {
     }
 
     if (!g_socialAlertPending) return;
-    if (!g_socialMode || now - g_socialAlertQueuedAt > 3000) {
+    if (!g_socialMode || !g_socialReminderEnabled || now - g_socialAlertQueuedAt > 3000) {
         g_socialAlertPending = false;
         return;
     }
@@ -916,12 +1144,15 @@ static void pollSocialInteraction(uint32_t now) {
     uint32_t token = g_socialAlertToken;
     int8_t rssi = g_socialAlertRssi;
     g_socialAlertPending = false;
-    startFindDeviceAlert(0, SOCIAL_ALERT_DURATION_MS);
+    const uint8_t socialAlertType = g_vibrationEnabled
+        ? (g_soundEnabled ? 2 : 0)
+        : (g_soundEnabled ? 1 : 3);
+    startFindDeviceAlert(socialAlertType, SOCIAL_ALERT_DURATION_MS);
     Serial.print("  SOCIAL_PROXIMITY token=0x");
     Serial.print(token, HEX);
     Serial.print(" filteredRSSI=");
     Serial.print(rssi);
-    Serial.println(" dBm; short vibration started");
+    Serial.println(" dBm; configured alert started");
 }
 
 // SET_TIME 0x05 — 时间同步
@@ -930,8 +1161,19 @@ static void handleSetTime(uint8_t seq, const uint8_t* payload, uint8_t len) {
         sendResponse(CMD_SET_TIME, seq, STATUS_INVALID_PAYLOAD, nullptr, 0);
         return;
     }
-    // 当前 Capabilities 未声明时间同步，按协议明确返回不支持。
-    sendResponse(CMD_SET_TIME, seq, STATUS_NOT_SUPPORTED, nullptr, 0);
+    const uint32_t unixTime =
+        (uint32_t)payload[0] |
+        ((uint32_t)payload[1] << 8) |
+        ((uint32_t)payload[2] << 16) |
+        ((uint32_t)payload[3] << 24);
+    if (unixTime < 1577836800UL) {  // 2020-01-01，过滤明显无效时间。
+        sendResponse(CMD_SET_TIME, seq, STATUS_INVALID_PAYLOAD, nullptr, 0);
+        return;
+    }
+    g_timeBaseUnix = unixTime;
+    g_timeBaseMillis = millis();
+    g_timeSynced = true;
+    sendResponse(CMD_SET_TIME, seq, STATUS_OK, nullptr, 0);
 }
 
 // PING 0x06 — 连通性检测，原样返回 4 字节
@@ -951,6 +1193,26 @@ static void handleGetSocialToken(uint8_t seq) {
     data[2] = (uint8_t)((g_socialDeviceToken >> 16) & 0xFF);
     data[3] = (uint8_t)((g_socialDeviceToken >> 24) & 0xFF);
     sendResponse(CMD_GET_SOCIAL_TOKEN, seq, STATUS_OK, data, sizeof(data));
+}
+
+// ACK_SOCIAL_ENCOUNTER 0x08 — 小程序本地落盘后确认队首相遇事件。
+static void handleAckSocialEncounter(uint8_t seq, const uint8_t* payload, uint8_t len) {
+    if (len != 8) {
+        sendResponse(CMD_ACK_SOCIAL_ENCOUNTER, seq, STATUS_INVALID_PAYLOAD, nullptr, 0);
+        return;
+    }
+    const uint32_t eventBootId =
+        (uint32_t)payload[0] |
+        ((uint32_t)payload[1] << 8) |
+        ((uint32_t)payload[2] << 16) |
+        ((uint32_t)payload[3] << 24);
+    const uint32_t eventSequence =
+        (uint32_t)payload[4] |
+        ((uint32_t)payload[5] << 8) |
+        ((uint32_t)payload[6] << 16) |
+        ((uint32_t)payload[7] << 24);
+    const uint8_t remaining = acknowledgeSocialEncounter(eventBootId, eventSequence);
+    sendResponse(CMD_ACK_SOCIAL_ENCOUNTER, seq, STATUS_OK, &remaining, 1);
 }
 
 // 命令分发
@@ -973,6 +1235,12 @@ static void dispatchCommand(uint8_t cmd, uint8_t seq,
             if (payloadLen != 0) sendResponse(cmd, seq, STATUS_INVALID_PAYLOAD, nullptr, 0);
             else handleGetSocialToken(seq);
             break;
+        case CMD_ACK_SOCIAL_ENCOUNTER:
+            handleAckSocialEncounter(seq, payload, payloadLen);
+            break;
+        case CMD_SET_ALERT_SETTINGS:
+            handleSetAlertSettings(seq, payload, payloadLen);
+            break;
         default:
             sendResponse(cmd, seq, STATUS_UNKNOWN_COMMAND, nullptr, 0);
             break;
@@ -993,11 +1261,11 @@ static void sendStatusChanged() {
 static void sendButtonEvent(uint8_t buttonType) {
     uint8_t payload[5];
     payload[0] = buttonType;
-    // UnixTime — 没有 RTC 时填 0
-    payload[1] = 0;
-    payload[2] = 0;
-    payload[3] = 0;
-    payload[4] = 0;
+    const uint32_t unixTime = currentUnixTime(millis());
+    payload[1] = unixTime & 0xFF;
+    payload[2] = (unixTime >> 8) & 0xFF;
+    payload[3] = (unixTime >> 16) & 0xFF;
+    payload[4] = (unixTime >> 24) & 0xFF;
     sendEvent(EVT_BUTTON_EVENT, payload, 5);
 }
 
@@ -2048,6 +2316,8 @@ class ServerCB : public NimBLEServerCallbacks {
         g_audioDataSubscribed = false;
         g_audioStatusSubscribed = false;
         g_ttsStatusSubscribed = false;
+        g_socialEncounterAwaitingAck = false;
+        g_socialEncounterSendAttempts = 0;
         if (g_connHandle == connInfo.getConnHandle()) {
             g_connHandle = BLE_HS_CONN_HANDLE_NONE;
         }
@@ -2081,6 +2351,10 @@ class EventTxCB : public NimBLECharacteristicCallbacks {
         (void)pChar;
         g_connHandle = connInfo.getConnHandle();
         g_eventTxSubscribed = (subValue & 0x01) != 0;
+        if (g_eventTxSubscribed) {
+            g_socialEncounterAwaitingAck = false;
+            g_socialEncounterSendAttempts = 0;
+        }
         Serial.print("  Event TX subscribed: ");
         Serial.println(g_eventTxSubscribed ? "yes" : "no");
     }
@@ -2304,13 +2578,20 @@ void setup() {
     digitalWrite(PIN_ALERT, LOW);
     digitalWrite(PIN_LED, LOW);
 
-    if (g_preferences.begin("yuntuan", false)) {
+    g_preferencesReady = g_preferences.begin("yuntuan", false);
+    if (g_preferencesReady) {
         g_socialMode = g_preferences.getBool("social", false) ? 1 : 0;
+        g_socialReminderEnabled = g_preferences.getBool("socialAlert", true);
+        g_vibrationEnabled = g_preferences.getBool("vibration", true);
+        g_soundEnabled = g_preferences.getBool("sound", true);
         Serial.print("  SocialMode restored: ");
         Serial.println(g_socialMode);
     } else {
         Serial.println("  [WARN] Cannot open preferences; SocialMode will not persist");
     }
+    loadSocialEncounterQueue();
+    g_socialEncounterBootId = esp_random();
+    if (g_socialEncounterBootId == 0) g_socialEncounterBootId = 1;
     g_socialDeviceToken = esp_random();
     if (g_socialDeviceToken == 0) g_socialDeviceToken = 1;
 

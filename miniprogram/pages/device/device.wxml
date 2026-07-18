@@ -1,107 +1,139 @@
-<view class="page">
-  <view class="device-card card">
-    <image wx:if="{{socialProfile.avatarType === 'custom'}}" class="device-owner-avatar" src="{{socialProfile.avatarValue}}" mode="aspectFill" />
-    <view wx:else class="device-owner-avatar virtual-owner-avatar" style="background: {{socialProfile.avatarColor}}">{{socialProfile.avatarValue}}</view>
-    <view class="title owner-nickname">{{socialProfile.nickname}}</view>
-    <text class="device-name">{{device.name}}</text>
-    <view class="connection {{device.ready ? 'connected' : ''}}">
-      ● {{device.ready ? '设备已就绪' : (device.connected ? '正在初始化协议' : statusText)}}
+<view class="page device-page tab-swipe-page" style="{{tabSwipeStyle}}" bindtouchstart="onTabSwipeStart" bindtouchmove="onTabSwipeMove" bindtouchend="onTabSwipeEnd" bindtouchcancel="onTabSwipeCancel">
+  <view class="page-heading">
+    <view>
+      <view class="title">我的挂件</view>
+      <text class="page-subtitle">连接设备、管理提醒并查看最近相遇</text>
     </view>
-    <block wx:if="{{device.battery !== null}}">
-      <view class="battery-wrap"><view class="battery-fill" style="width: {{device.battery}}%"></view></view>
-      <text class="battery-text">剩余电量 {{device.battery}}%</text>
-      <text wx:if="{{device.battery <= 20}}" class="low-battery">电量较低，请及时充电</text>
-    </block>
-    <text wx:else class="battery-text">连接后读取真实电量</text>
-    <view wx:if="{{device.ready}}" class="protocol-tags">
-      <text>协议 {{device.protocolMajor}}.{{device.protocolMinor}}</text>
-      <text>{{device.simulated ? '模拟设备' : '真实设备'}}</text>
-      <text>{{device.securityMode === 0 ? '实验室模式' : '认证模式'}}</text>
+    <view class="device-state-pill {{device.ready ? 'online' : ''}}">
+      <text class="state-dot"></text>
+      <text>{{device.ready ? '已连接' : '未连接'}}</text>
     </view>
+  </view>
+
+  <view class="card device-summary-card">
+    <view class="owner-row">
+      <image wx:if="{{socialProfile.avatarType === 'custom'}}" class="device-owner-avatar" src="{{socialProfile.avatarValue}}" mode="aspectFill" />
+      <view wx:else class="device-owner-avatar virtual-owner-avatar" style="background: {{socialProfile.avatarColor}}">{{socialProfile.avatarValue}}</view>
+      <view class="owner-copy">
+        <text class="owner-nickname">{{socialProfile.nickname}}</text>
+        <text class="device-name">{{device.name}}</text>
+      </view>
+      <text wx:if="{{device.ready && device.battery !== null}}" class="battery-number">{{device.battery}}%</text>
+    </view>
+    <view class="connection-line {{device.ready ? 'connected' : ''}}">
+      {{device.ready ? (device.simulated ? '模拟挂件已就绪' : '云团挂件已就绪') : (device.connected ? '正在初始化设备…' : statusText)}}
+    </view>
+    <view wx:if="{{device.ready && device.battery !== null}}" class="battery-wrap">
+      <view class="battery-fill" style="width: {{device.battery}}%"></view>
+    </view>
+    <text wx:if="{{device.battery !== null && device.battery <= 20}}" class="low-battery">电量较低，请及时充电</text>
     <text wx:if="{{device.errorMessage}}" class="error-text">{{device.errorMessage}}</text>
-    <text wx:if="{{device.lastEventText}}" class="event-text">{{device.lastEventText}}</text>
   </view>
 
   <block wx:if="{{!device.connected}}">
-    <view class="scan-actions">
+    <view class="connection-actions">
       <button
         wx:if="{{device.canReconnect}}"
-        class="primary-btn scan-btn"
+        class="primary-btn"
         loading="{{device.connecting}}"
         disabled="{{operating || device.connecting}}"
         bindtap="reconnectLastDevice"
       >重新连接 {{device.rememberedDeviceName || '上次的挂件'}}</button>
-      <button wx:if="{{!discovering}}" class="primary-btn scan-btn" disabled="{{operating}}" bindtap="startScan">搜索附近挂件</button>
-      <button wx:else class="secondary-btn scan-btn" bindtap="stopScan">停止搜索</button>
-      <button class="simulator-btn" disabled="{{operating}}" bindtap="loadSimulator">加载模拟挂件</button>
+      <button wx:if="{{!discovering}}" class="primary-btn" disabled="{{operating}}" bindtap="startScan">搜索附近挂件</button>
+      <button wx:else class="secondary-btn" bindtap="stopScan">停止搜索</button>
+      <view class="device-details-entry" bindtap="goDeviceDetails">
+        <view><text>设备详细信息</text><text>连接信息、模拟设备与 BLE 联调</text></view>
+        <text class="entry-arrow">›</text>
+      </view>
     </view>
 
-    <view class="section-title nearby-title">附近的云团挂件（{{nearbyDevices.length}}）</view>
-    <view wx:if="{{!nearbyDevices.length}}" class="empty card">
-      {{discovering ? '正在搜索，请把挂件放在手机附近…' : '尚未发现名称以 YT- 开头的挂件'}}
+    <view wx:if="{{discovering || nearbyDevices.length}}" class="section-head">
+      <text>附近挂件</text><text>{{nearbyDevices.length}} 台</text>
     </view>
+    <view wx:if="{{discovering && !nearbyDevices.length}}" class="empty compact-empty">正在搜索，请把挂件放在手机附近…</view>
     <view wx:for="{{nearbyDevices}}" wx:key="deviceId" class="nearby-device card">
       <view class="nearby-info">
         <text class="nearby-name">{{item.name}}</text>
-        <text class="nearby-id">设备ID：{{item.name}}</text>
+        <text class="nearby-id">设备 ID：{{item.name}}</text>
         <text class="nearby-rssi">信号 {{item.RSSI}} dBm</text>
       </view>
-      <button
-        class="connect-btn"
-        loading="{{connectingDeviceId === item.deviceId}}"
-        disabled="{{operating}}"
-        data-device-id="{{item.deviceId}}"
-        bindtap="connectDevice"
-      >连接</button>
+      <button class="connect-btn" loading="{{connectingDeviceId === item.deviceId}}" disabled="{{operating}}" data-device-id="{{item.deviceId}}" bindtap="connectDevice">连接</button>
     </view>
   </block>
 
   <block wx:if="{{device.ready}}">
-    <view class="card device-info-card">
-      <view class="info-row"><text>设备型号</text><text>{{device.modelNumber}}</text></view>
-      <view class="info-row"><text>固件版本</text><text>{{device.firmwareRevision}}</text></view>
-      <view class="info-row"><text>硬件版本</text><text>{{device.hardwareRevision}}</text></view>
-      <view wx:if="{{device.serialNumber}}" class="info-row"><text>设备序列号</text><text>{{device.serialNumber}}</text></view>
+    <view class="section-head"><text>常用功能</text></view>
+    <view class="card core-controls-card">
+      <view class="setting-row">
+        <view><text class="control-title">社交模式</text><text class="control-tip">开启后才会发现附近的云团伙伴</text></view>
+        <switch checked="{{device.socialMode}}" disabled="{{operating}}" color="#52796F" data-no-swipe="true" bindchange="toggleSocialMode" />
+      </view>
+      <view class="setting-row compact-setting-row">
+        <view><text class="control-title">社交提醒</text><text class="control-tip">遇到附近伙伴时提醒</text></view>
+        <switch checked="{{settings.socialReminder}}" disabled="{{settingSaving}}" color="#52796F" data-key="socialReminder" data-no-swipe="true" bindchange="updateAlertSetting" />
+      </view>
+      <view class="setting-row compact-setting-row">
+        <view><text class="control-title">振动反馈</text><text class="control-tip">挂件提醒时使用振动</text></view>
+        <switch checked="{{settings.vibration}}" disabled="{{settingSaving}}" color="#52796F" data-key="vibration" data-no-swipe="true" bindchange="updateAlertSetting" />
+      </view>
+      <view class="setting-row compact-setting-row">
+        <view><text class="control-title">声音提示</text><text class="control-tip">挂件提醒时播放提示音</text></view>
+        <switch checked="{{settings.sound}}" disabled="{{settingSaving}}" color="#52796F" data-key="sound" data-no-swipe="true" bindchange="updateAlertSetting" />
+      </view>
+      <button class="find-device-button" disabled="{{operating}}" bindtap="findDevice">提醒查找挂件</button>
     </view>
-    <view class="card setting-row">
-      <view><view class="section-title">社交模式</view><text class="muted">状态以挂件返回的结果为准</text></view>
-      <switch checked="{{device.socialMode}}" disabled="{{operating}}" color="#52796F" bindchange="toggleSocialMode" />
+
+    <view class="section-head encounter-section-head">
+      <text>最近相遇</text>
+      <text class="section-link" bindtap="goEncounters">全部记录{{device.encounterCount ? ' · ' + device.encounterCount : ''}} ›</text>
     </view>
     <view wx:if="{{device.lastEncounterAt}}" class="card encounter-card">
       <block wx:if="{{device.lastEncounterProfile}}">
-        <image wx:if="{{device.lastEncounterProfile.avatarType === 'custom'}}" class="encounter-avatar" src="{{device.lastEncounterProfile.avatarValue}}" mode="aspectFill" />
-        <view wx:else class="encounter-avatar virtual-encounter-avatar" style="background: {{device.lastEncounterProfile.avatarColor}}">{{device.lastEncounterProfile.avatarValue}}</view>
-        <view class="encounter-content">
-          <view class="encounter-name-row">
-            <text class="encounter-name">{{device.lastEncounterProfile.nickname}}</text>
-            <text class="encounter-intention">{{device.lastEncounterProfile.intentionLabel}}</text>
+        <view class="encounter-profile-row">
+          <image wx:if="{{device.lastEncounterProfile.avatarType === 'custom'}}" class="encounter-avatar" src="{{device.lastEncounterProfile.avatarValue}}" mode="aspectFill" />
+          <view wx:else class="encounter-avatar virtual-encounter-avatar" style="background: {{device.lastEncounterProfile.avatarColor}}">{{device.lastEncounterProfile.avatarValue}}</view>
+          <view class="encounter-content">
+            <view class="encounter-name-row">
+              <text class="encounter-name">{{device.lastEncounterProfile.nickname}}</text>
+              <text class="encounter-intention">{{device.lastEncounterProfile.intentionLabel}}</text>
+            </view>
+            <text class="encounter-bio">{{device.lastEncounterProfile.bio}}</text>
+            <view wx:if="{{device.lastEncounterProfile.tags.length}}" class="encounter-tags">
+              <text wx:for="{{device.lastEncounterProfile.tags}}" wx:key="*this">{{item}}</text>
+            </view>
           </view>
-          <text class="encounter-bio">{{device.lastEncounterProfile.bio}}</text>
-          <view wx:if="{{device.lastEncounterProfile.tags.length}}" class="encounter-tags">
-            <text wx:for="{{device.lastEncounterProfile.tags}}" wx:key="*this">{{item}}</text>
-          </view>
-          <text class="encounter-meta">{{device.lastEncounterText}} · 信号 {{device.lastEncounterRssi}} dBm</text>
+        </view>
+        <text class="encounter-meta">{{device.lastEncounterText}} · 信号 {{device.lastEncounterRssi}} dBm</text>
+        <view class="encounter-actions">
+          <button
+            wx:if="{{latestEncounter.interactionRef && latestEncounter.greetingStatus === 'none' && device.lastEncounterProfile.intention !== 'quiet'}}"
+            class="greet-button"
+            loading="{{operating}}"
+            disabled="{{operating}}"
+            bindtap="greetLatestEncounter"
+          >打个招呼</button>
+          <view wx:elif="{{latestEncounter.greetingStatus === 'sent'}}" class="greeting-state">招呼已发送，等待回应</view>
+          <view wx:elif="{{latestEncounter.greetingStatus === 'matched'}}" class="greeting-state matched" bindtap="goSocialInbox">已经认识 · 去聊天 ›</view>
+          <button class="view-encounters-button" bindtap="goEncounters">查看详情</button>
         </view>
       </block>
       <block wx:else>
-        <view class="encounter-icon">遇</view>
-        <view class="encounter-content">
-          <view class="section-title">遇到云团伙伴</view>
-          <text class="muted">{{device.encounterProfileLoading ? '正在获取对方的公开名片…' : device.encounterProfileMessage}}</text>
-          <text class="encounter-meta">{{device.lastEncounterText}} · 信号 {{device.lastEncounterRssi}} dBm</text>
+        <view class="encounter-loading-row">
+          <view class="encounter-icon">遇</view>
+          <view class="encounter-content">
+            <text class="control-title">遇到一位云团伙伴</text>
+            <text class="control-tip">{{device.encounterProfileLoading ? '正在获取对方的公开名片…' : device.encounterProfileMessage}}</text>
+          </view>
         </view>
+        <button wx:if="{{!device.encounterProfileLoading}}" class="encounter-retry" bindtap="retryEncounterProfile">重新获取名片</button>
       </block>
-      <view class="encounter-count-wrap">
-        <text class="encounter-count">{{device.encounterCount}} 次</text>
-      </view>
     </view>
-    <view class="device-actions">
-      <button class="secondary-btn" disabled="{{operating}}" bindtap="findDevice">提醒查找挂件</button>
-      <button class="secondary-btn" disabled="{{operating}}" bindtap="pingDevice">测试通信</button>
-    </view>
-    <button class="disconnect-btn" loading="{{operating}}" bindtap="disconnectDevice">断开设备</button>
-  </block>
+    <view wx:else class="empty card compact-empty">开启社交模式后，最近遇见的伙伴会显示在这里</view>
 
-  <button class="debug-btn" bindtap="goBleDebug">打开通用蓝牙联调工具</button>
-  <view class="ble-tip">正式设备页已按云团 BLE 1.3 协议通信，下拉可重新读取设备状态。</view>
+    <view class="section-head"><text>更多</text></view>
+    <view class="card device-details-entry connected-entry" bindtap="goDeviceDetails">
+      <view><text>设备详细信息</text><text>型号、版本、连接管理与开发测试</text></view>
+      <text class="entry-arrow">›</text>
+    </view>
+  </block>
 </view>

@@ -1,0 +1,63 @@
+<view class="page encounter-page">
+  <view class="page-heading">
+    <view class="title">最近遇见</view>
+    <text class="muted">仅保存最近 30 次相遇，不展示位置和设备身份</text>
+  </view>
+  <button class="inbox-entry" bindtap="goInbox">查看收到的招呼与已认识伙伴</button>
+
+  <view wx:if="{{loading}}" class="loading">正在整理相遇记录…</view>
+  <view wx:elif="{{!records.length}}" class="empty card">
+    <view class="empty-icon">遇</view>
+    <view>还没有相遇记录</view>
+    <text>双方开启社交模式并靠近后，这里会显示公开名片</text>
+  </view>
+
+  <view wx:for="{{records}}" wx:key="encounterId" class="encounter-record card">
+    <block wx:if="{{item.profile}}">
+      <image wx:if="{{item.profile.avatarType === 'custom'}}" class="avatar" src="{{item.profile.avatarValue}}" mode="aspectFill" />
+      <view wx:else class="avatar virtual-avatar" style="background: {{item.profile.avatarColor}}">{{item.profile.avatarValue}}</view>
+      <view class="record-main">
+        <view class="name-row">
+          <text class="name">{{item.profile.nickname}}</text>
+          <text class="intention">{{item.profile.intentionLabel}}</text>
+        </view>
+        <text class="bio">{{item.profile.bio}}</text>
+        <view wx:if="{{item.profile.tags.length}}" class="tags">
+          <text wx:for="{{item.profile.tags}}" wx:key="*this">{{item}}</text>
+        </view>
+        <text class="meta">{{item.timeText}} · 信号 {{item.rssi}} dBm</text>
+        <button
+          wx:if="{{item.profile.intention !== 'quiet' && item.interactionRef}}"
+          class="greeting-btn {{item.greetingStatus !== 'none' ? 'done' : ''}}"
+          disabled="{{operatingId || item.greetingStatus !== 'none'}}"
+          loading="{{operatingId === item.encounterId}}"
+          data-id="{{item.encounterId}}"
+          bindtap="sendGreeting"
+        >
+          <block wx:if="{{item.greetingStatus === 'matched'}}">已互相认识</block>
+          <block wx:elif="{{item.greetingStatus === 'sent'}}">已打招呼</block>
+          <block wx:elif="{{item.greetingStatus === 'declined'}}">对方暂未接受</block>
+          <block wx:else>打个招呼</block>
+        </button>
+        <text wx:elif="{{item.profile.intention === 'quiet'}}" class="quiet-tip">对方当前暂不接收招呼</text>
+        <text wx:else class="quiet-tip">本次互动期限已过</text>
+      </view>
+    </block>
+    <block wx:else>
+      <view class="fallback-icon">遇</view>
+      <view class="record-main">
+        <view class="name">未获取到公开名片</view>
+        <text class="bio">{{item.errorMessage || '可以重新尝试获取对方名片'}}</text>
+        <text class="meta">{{item.timeText}} · 信号 {{item.rssi}} dBm</text>
+        <button
+          wx:if="{{item.status !== 'unavailable'}}"
+          class="retry-btn"
+          loading="{{operatingId === item.encounterId}}"
+          disabled="{{operatingId}}"
+          data-id="{{item.encounterId}}"
+          bindtap="retryProfile"
+        >重新获取名片</button>
+      </view>
+    </block>
+  </view>
+</view>

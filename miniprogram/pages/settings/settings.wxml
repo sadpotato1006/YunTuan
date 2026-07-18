@@ -1,30 +1,30 @@
-<view class="page">
-  <view class="title settings-title">陪伴设置</view>
+<view class="page settings-page tab-swipe-page" style="{{tabSwipeStyle}}" bindtouchstart="onTabSwipeStart" bindtouchmove="onTabSwipeMove" bindtouchend="onTabSwipeEnd" bindtouchcancel="onTabSwipeCancel">
+  <view class="profile-heading">
+    <text class="title">个人中心</text>
+    <text>管理公开名片、隐私与个人数据</text>
+  </view>
+
   <view class="card social-profile-entry" bindtap="goSocialProfile">
     <image wx:if="{{socialProfile.avatarType === 'custom'}}" class="profile-entry-avatar" src="{{socialProfile.avatarValue}}" mode="aspectFill" />
     <view wx:else class="profile-entry-avatar virtual-profile-avatar" style="background: {{socialProfile.avatarColor}}">{{socialProfile.avatarValue}}</view>
     <view class="profile-entry-content">
-      <view class="profile-entry-name-row">
-        <text class="profile-entry-name">{{socialProfile.nickname}}</text>
-        <text class="profile-entry-intention">{{socialProfile.intentionLabel}}</text>
-      </view>
+      <view class="profile-entry-name-row"><text class="profile-entry-name">{{socialProfile.nickname}}</text><text class="profile-entry-intention">{{socialProfile.intentionLabel}}</text></view>
       <text class="profile-entry-bio">{{socialProfile.bio}}</text>
-      <view wx:if="{{socialProfile.tags.length}}" class="profile-entry-tags">
-        <text wx:for="{{socialProfile.tags}}" wx:key="*this">{{item}}</text>
-      </view>
-      <text class="profile-edit-hint">点击进入编辑名片</text>
+      <text class="profile-edit-hint">查看并编辑我的社交名片</text>
     </view>
     <text class="arrow">›</text>
   </view>
-  <view class="card list-card">
-    <view class="setting-item"><view><view>社交提醒</view><text>有人想和您互动时提醒</text></view><switch checked="{{settings.socialReminder}}" color="#52796F" data-key="socialReminder" bindchange="updateSetting" /></view>
-    <view class="setting-item"><view><view>振动反馈</view><text>重要操作时轻微振动</text></view><switch checked="{{settings.vibration}}" color="#52796F" data-key="vibration" bindchange="updateSetting" /></view>
-    <view class="setting-item"><view><view>声音提示</view><text>播放操作和关怀提示音</text></view><switch checked="{{settings.sound}}" color="#52796F" data-key="sound" bindchange="updateSetting" /></view>
-  </view>
+
+  <view class="settings-section-head"><text>隐私与数据</text></view>
   <view class="card list-card links">
-    <view class="link-item" bindtap="showPrivacy"><text>隐私设置</text><text class="arrow">›</text></view>
-    <view class="link-item" bindtap="showAbout"><text>关于云团</text><text class="arrow">›</text></view>
-    <view class="link-item danger-link" bindtap="clearLocalData"><text>清除本地数据</text><text class="arrow">›</text></view>
+    <view class="link-item" bindtap="showPrivacy"><view><text>隐私说明</text><text>了解聊天、名片和相遇数据如何使用</text></view><text class="arrow">›</text></view>
+    <view class="link-item" bindtap="clearLocalData"><view><text>清除本机缓存</text><text>会同时删除本机联系方式预设</text></view><text class="arrow">›</text></view>
+    <view class="link-item danger-link" bindtap="deleteCloudData"><view><text>{{deletingCloudData ? '正在删除云端数据…' : '删除全部个人数据'}}</text><text>同时删除云端数据与本机缓存</text></view><text class="arrow">›</text></view>
+  </view>
+
+  <view class="settings-section-head"><text>关于</text></view>
+  <view class="card list-card links">
+    <view class="link-item" bindtap="showAbout"><view><text>关于云团</text><text>产品说明与当前版本</text></view><text class="arrow">›</text></view>
   </view>
   <view class="version">云团 · 温暖常伴左右</view>
 </view>

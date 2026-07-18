@@ -7,10 +7,10 @@ const COLLECTION = "emotion_records";
 const MAX_RECORDS = 30;
 const MAX_NOTE_CHARACTERS = 100;
 const EMOTION_OPTIONS = [
-  { name: "开心", score: 92, icon: "😊", defaultNote: "今天心情很好，想把这份快乐记下来。" },
-  { name: "平静", score: 82, icon: "🙂", defaultNote: "今天心里很安稳，平平淡淡也很好。" },
-  { name: "一般", score: 70, icon: "😐", defaultNote: "今天心情比较平常，慢慢照顾好自己。" },
-  { name: "有点低落", score: 55, icon: "😔", defaultNote: "今天有些不开心，希望明天会轻松一点。" }
+  { name: "开心", icon: "😊", defaultNote: "今天心情很好，想把这份快乐记下来。" },
+  { name: "平静", icon: "🙂", defaultNote: "今天心里很安稳，平平淡淡也很好。" },
+  { name: "一般", icon: "😐", defaultNote: "今天心情比较平常，慢慢照顾好自己。" },
+  { name: "有点低落", icon: "😔", defaultNote: "今天有些不开心，希望明天会轻松一点。" }
 ];
 
 exports.main = async event => {
@@ -32,6 +32,10 @@ exports.main = async event => {
     }
     if (action === "addEmotionRecord") {
       return success(await saveTodayRecord(ownerKey, safeEvent.name, safeEvent.note));
+    }
+    if (action === "deleteMyEmotionRecords") {
+      await db.collection(COLLECTION).where({ ownerKey }).remove();
+      return success({ deleted: true });
     }
     return { code: 400, message: "不支持的情绪记录操作", data: {} };
   } catch (error) {
@@ -57,8 +61,9 @@ async function readRecords(ownerKey) {
 async function saveTodayRecord(ownerKey, name, noteValue) {
   const option = EMOTION_OPTIONS.find(item => item.name === name);
   if (!option) throw publicError(400, "请选择一种心情");
-  const customNote = normalizeNote(noteValue);
-  const note = customNote || option.defaultNote;
+  const normalizedNote = normalizeNote(noteValue);
+  const noteCustomized = Boolean(normalizedNote && normalizedNote !== option.defaultNote);
+  const note = noteCustomized ? normalizedNote : option.defaultNote;
 
   const now = Date.now();
   const dayKey = getShanghaiDayKey(now);
@@ -68,9 +73,8 @@ async function saveTodayRecord(ownerKey, name, noteValue) {
     dayKey,
     date: formatChineseDate(dayKey),
     name: option.name,
-    score: option.score,
     note,
-    noteCustomized: Boolean(customNote),
+    noteCustomized,
     updatedAt: now
   };
   await db.collection(COLLECTION).doc(recordId).set({ data: record });
@@ -87,13 +91,17 @@ function normalizeNote(value) {
 }
 
 function toPublicRecord(record) {
+  const option = EMOTION_OPTIONS.find(item => item.name === record.name);
+  const defaultNote = option ? option.defaultNote : "";
+  const savedNote = typeof record.note === "string" ? record.note.trim() : "";
+  const note = savedNote || defaultNote;
   return {
     id: record._id || sha256(`${record.ownerKey}:${record.dayKey}`),
     date: record.date || formatChineseDate(record.dayKey),
     name: record.name,
-    score: record.score,
-    note: record.note,
-    noteCustomized: record.noteCustomized !== false
+    icon: option ? option.icon : "",
+    note,
+    noteCustomized: Boolean(savedNote && savedNote !== defaultNote && record.noteCustomized !== false)
   };
 }
 

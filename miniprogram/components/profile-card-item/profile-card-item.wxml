@@ -1,0 +1,14 @@
+<view class="profile-row">
+  <image wx:if="{{profile.avatarType === 'custom'}}" class="avatar" src="{{profile.avatarValue}}" mode="aspectFill" />
+  <view wx:else class="avatar virtual-avatar" style="background: {{profile.avatarColor}}">{{profile.avatarValue}}</view>
+  <view class="main">
+    <view class="name-row">
+      <text class="name">{{profile.nickname}}</text>
+      <text class="intention">{{profile.intentionLabel}}</text>
+    </view>
+    <text class="bio">{{profile.bio}}</text>
+    <view wx:if="{{profile.tags.length}}" class="tags">
+      <text wx:for="{{profile.tags}}" wx:key="*this">{{item}}</text>
+    </view>
+  </view>
+</view>
