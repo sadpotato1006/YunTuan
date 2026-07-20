@@ -7,7 +7,7 @@
       <view class="device-row" bindtap="goDevice">
         <text class="status-dot {{device.connected ? 'online' : ''}}"></text>
         <text>{{device.connected ? '设备已连接' : '设备未连接'}}</text>
-        <text class="battery">电量 {{device.battery === null ? '--' : device.battery}}%</text>
+        <text class="battery">{{device.chargingState === 1 ? '充电中 ' : (device.chargingState === 2 ? '已充满 ' : '电量 ')}}{{device.battery === null ? '--' : device.battery}}%</text>
         <text class="row-arrow">›</text>
       </view>
     </view>

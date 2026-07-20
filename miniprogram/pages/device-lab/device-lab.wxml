@@ -10,7 +10,7 @@
       <view class="lab-device-icon">{{device.simulated ? '拟' : '硬'}}</view>
       <view>
         <text class="status-title">{{device.ready ? (device.simulated ? '模拟挂件已连接' : '真实挂件已连接') : '尚未连接设备'}}</text>
-        <text class="status-copy">{{device.ready ? ('BLE ' + device.protocolMajor + '.' + device.protocolMinor + ' · 电量 ' + (device.battery === null ? '--' : device.battery) + '%') : '加载模拟挂件后即可测试社交闭环'}}</text>
+        <text class="status-copy">{{device.ready ? ('BLE ' + device.protocolMajor + '.' + device.protocolMinor + ' · ' + (device.chargingState === 1 ? '充电中 ' : (device.chargingState === 2 ? '已充满 ' : '电量 ')) + (device.battery === null ? '--' : device.battery) + '%') : '加载模拟挂件后即可测试社交闭环'}}</text>
       </view>
     </view>
     <view wx:if="{{device.connected}}" class="detail-grid">
@@ -52,6 +52,16 @@
   <view class="card tool-list">
     <view class="tool-item {{!device.ready ? 'disabled' : ''}}" bindtap="pingDevice"><view><text>测试控制通信</text><text>发送 Ping 并验证控制帧响应</text></view><text>›</text></view>
     <view class="tool-item" bindtap="goBleDebug"><view><text>通用 BLE 联调工具</text><text>服务、特征值、读写与通知测试</text></view><text>›</text></view>
+  </view>
+
+  <view class="section-head"><text>真机诊断</text><text>{{diagnosticCount}} 条</text></view>
+  <view class="card diagnostic-card">
+    <text class="card-title">导出故障现场</text>
+    <text class="card-tip">记录 BLE 连接、语音状态切换、云函数耗时和首包播放耗时；不记录聊天正文、录音或联系方式。</text>
+    <view class="diagnostic-actions">
+      <button bindtap="copyDiagnosticReport">复制诊断报告</button>
+      <button class="diagnostic-clear" disabled="{{!diagnosticCount}}" bindtap="clearDiagnosticReport">清空记录</button>
+    </view>
   </view>
 
   <text class="lab-footnote">真实 RSSI 距离、广播扫描、物理振动、按键、录音与功耗仍需真机验证。</text>

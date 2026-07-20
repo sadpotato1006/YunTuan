@@ -16,7 +16,7 @@
 #define DEVICE_SN                 "YT01260000000001"
 #define DEVICE_NAME               "YT-000001"
 #define MODEL_NUMBER              "YT-P01"
-#define FIRMWARE_REVISION         "0.7.0"
+#define FIRMWARE_REVISION         "0.8.0"
 #define HARDWARE_REVISION         "A1"
 
 #define BATTERY_SERVICE_UUID      "0000180F-0000-1000-8000-00805F9B34FB"
@@ -121,6 +121,9 @@
 #define PIN_BUTTON                13            // 独立 PTT 按键，低电平有效
 #define PIN_ALERT                 2             // 蜂鸣器/振动马达
 #define PIN_LED                   47            // 外接状态灯；GPIO8 保留给 MAX98357A DIN
+#define PIN_BATTERY_ADC           1             // 100k/100k 分压中点，ADC1_CH0
+#define PIN_TP4056_CHRG           9             // TP4056 CHRG，开漏、低电平=充电中
+#define PIN_TP4056_STDBY          10            // TP4056 STDBY，开漏、低电平=已充满
 
 // INMP441：L/R 接 GND，选择左声道。
 #define PIN_MIC_BCLK              5
@@ -245,7 +248,7 @@ static bool     g_vibrationEnabled = true;
 static bool     g_soundEnabled = true;
 static uint8_t  g_bindState     = 0;           // 0=未绑定
 static uint8_t  g_batteryLevel  = 100;
-static uint8_t  g_chargingState = 0;           // 0=未充电 1=充电中 2=已充满 255=未知
+static uint8_t  g_chargingState = 255;         // 0=未充电 1=充电中 2=已充满 255=未知
 static uint32_t g_uptime        = 0;
 static bool     g_connected     = false;
 static uint16_t g_capabilities  = CAPABILITIES;
@@ -258,6 +261,13 @@ static bool     g_alertToggle   = false;
 static uint32_t g_lastAlertToggle = 0;
 static uint8_t  g_alertType     = 0;
 static uint32_t g_alertTonePhase = 0;
+static bool     g_ledActivityOn = false;
+
+// 充电常亮优先级高于录音、查找挂件等临时灯效。
+static void setStatusLed(bool activityOn) {
+    g_ledActivityOn = activityOn;
+    digitalWrite(PIN_LED, (g_chargingState == 1 || activityOn) ? HIGH : LOW);
+}
 
 // Social beacon/scanner state. BLE callbacks only request advertising changes;
 // stop/start is performed by loop() so a connect callback never re-enters GAP.
@@ -863,7 +873,7 @@ static void stopFindDeviceAlert() {
     if (!g_alertActive) return;
     g_alertActive = false;
     digitalWrite(PIN_ALERT, LOW);
-    digitalWrite(PIN_LED, LOW);
+    setStatusLed(false);
     if (g_micReady) i2s_zero_dma_buffer(I2S_NUM_0);
 }
 
@@ -875,7 +885,7 @@ static void startFindDeviceAlert(uint8_t alertType, uint16_t duration) {
     g_alertType = alertType;
     g_alertTonePhase = 0;
     digitalWrite(PIN_ALERT, (alertType == 0 || alertType == 2) ? HIGH : LOW);
-    digitalWrite(PIN_LED, HIGH);
+    setStatusLed(true);
 }
 
 static void pollFindDeviceAlert(uint32_t now) {
@@ -894,7 +904,7 @@ static void pollFindDeviceAlert(uint32_t now) {
     const bool vibrationEnabled = g_alertType == 0 || g_alertType == 2;
     const bool soundEnabled = g_alertType == 1 || g_alertType == 2;
     digitalWrite(PIN_ALERT, vibrationEnabled && g_alertToggle ? HIGH : LOW);
-    digitalWrite(PIN_LED, g_alertToggle ? HIGH : LOW);
+    setStatusLed(g_alertToggle);
 
     // 当前硬件已有 MAX98357A 扬声器。没有额外振动马达时，仍可通过提示音和闪灯找到挂件。
     // 录音或 TTS 占用 I2S 时不抢占音频总线，GPIO2/状态灯提醒仍继续。
@@ -1462,7 +1472,7 @@ static void clearRecordedAudio() {
 static void discardRecordedAudio() {
     clearRecordedAudio();
     g_audioState = AUDIO_IDLE;
-    digitalWrite(PIN_LED, LOW);
+    setStatusLed(false);
 }
 
 static void beginAudioTransfer();
@@ -1499,7 +1509,7 @@ static bool startAudioRecording() {
     g_lastSpeechAt = 0;
     i2s_zero_dma_buffer(I2S_NUM_0);
     g_audioState = AUDIO_RECORDING;
-    digitalWrite(PIN_LED, HIGH);
+    setStatusLed(true);
 
     uint8_t status[4] = {
         AUDIO_STATUS_RECORDING,
@@ -1524,7 +1534,7 @@ static void finishAudioRecording(bool bufferFull) {
         }
     }
 
-    digitalWrite(PIN_LED, LOW);
+    setStatusLed(false);
     if (!g_speechDetected || g_audioSamples < AUDIO_MIN_SAMPLES) {
         Serial.println("  AUDIO: no valid speech, discarded");
         sendAudioError(AUDIO_ERROR_NO_SPEECH);
@@ -2262,34 +2272,132 @@ static void pollButton() {
 }
 
 // =============================================================================
-// 11. 电量模拟（每秒减 1%，最低 5%）
+// 11. 真实电池电压与 TP4056 充电状态
 // =============================================================================
-static uint32_t g_lastBatteryTick = 0;
-static bool     g_lowBatterySent  = false;
+#define BATTERY_SAMPLE_INTERVAL_MS 30000UL
+#define CHARGE_SAMPLE_INTERVAL_MS  250UL
+#define BATTERY_SAMPLE_COUNT       15
+#define BATTERY_DIVIDER_NUMERATOR  2UL          // 100k/100k 分压，电池电压=ADC×2
 
-static void pollBattery() {
+static uint32_t g_lastBatteryTick = 0;
+static uint32_t g_lastChargeTick = 0;
+static uint16_t g_filteredBatteryMv = 0;
+static uint8_t  g_lastLowBatteryBand = 0;
+static uint8_t  g_chargeCandidate = 255;
+static uint8_t  g_chargeCandidateCount = 0;
+
+static uint8_t readChargingState() {
+    const bool charging = digitalRead(PIN_TP4056_CHRG) == LOW;
+    const bool standby = digitalRead(PIN_TP4056_STDBY) == LOW;
+    if (charging && !standby) return 1;
+    if (!charging && standby) return 2;
+    if (!charging && !standby) return 0;
+    return 255;                                // 两路同时拉低属于异常状态
+}
+
+static uint16_t readBatteryMillivolts() {
+    uint16_t samples[BATTERY_SAMPLE_COUNT];
+    for (uint8_t i = 0; i < BATTERY_SAMPLE_COUNT; i++) {
+        samples[i] = (uint16_t)analogReadMilliVolts(PIN_BATTERY_ADC);
+        delay(2);
+    }
+    // 小样本插入排序后取中位数，过滤扬声器和 BLE 瞬态噪声。
+    for (uint8_t i = 1; i < BATTERY_SAMPLE_COUNT; i++) {
+        uint16_t value = samples[i];
+        int8_t position = i - 1;
+        while (position >= 0 && samples[position] > value) {
+            samples[position + 1] = samples[position];
+            position--;
+        }
+        samples[position + 1] = value;
+    }
+    return samples[BATTERY_SAMPLE_COUNT / 2] * BATTERY_DIVIDER_NUMERATOR;
+}
+
+static uint8_t batteryPercentFromMillivolts(uint16_t millivolts) {
+    struct BatteryPoint { uint16_t mv; uint8_t percent; };
+    static const BatteryPoint curve[] = {
+        {3300, 0}, {3500, 5}, {3600, 10}, {3650, 15}, {3700, 22},
+        {3750, 32}, {3800, 42}, {3850, 52}, {3900, 62}, {3950, 72},
+        {4000, 80}, {4050, 85}, {4100, 90}, {4150, 95}, {4200, 100}
+    };
+    if (millivolts <= curve[0].mv) return 0;
+    const size_t count = sizeof(curve) / sizeof(curve[0]);
+    if (millivolts >= curve[count - 1].mv) return 100;
+    for (size_t i = 1; i < count; i++) {
+        if (millivolts > curve[i].mv) continue;
+        const BatteryPoint& low = curve[i - 1];
+        const BatteryPoint& high = curve[i];
+        return low.percent + (uint32_t)(millivolts - low.mv) *
+            (high.percent - low.percent) / (high.mv - low.mv);
+    }
+    return 0;
+}
+
+static uint8_t lowBatteryBand(uint8_t percent) {
+    if (percent <= 5) return 3;
+    if (percent <= 10) return 2;
+    if (percent <= 20) return 1;
+    return 0;
+}
+
+static void publishBatteryIfChanged(uint8_t previousLevel, bool forceStatus) {
+    if (pBatteryLevel && g_batteryLevel != previousLevel) {
+        pBatteryLevel->setValue(&g_batteryLevel, 1);
+        pBatteryLevel->notify();
+    }
+    const uint8_t band = lowBatteryBand(g_batteryLevel);
+    if (g_chargingState != 1 && band > g_lastLowBatteryBand) sendLowBattery();
+    g_lastLowBatteryBand = band;
+    if (forceStatus || g_batteryLevel != previousLevel) sendStatusChanged();
+}
+
+static void pollChargingState(uint32_t now) {
+    if (now - g_lastChargeTick < CHARGE_SAMPLE_INTERVAL_MS) return;
+    g_lastChargeTick = now;
+    const uint8_t current = readChargingState();
+    if (current != g_chargeCandidate) {
+        g_chargeCandidate = current;
+        g_chargeCandidateCount = 1;
+        return;
+    }
+    if (g_chargeCandidateCount < 3) g_chargeCandidateCount++;
+    if (g_chargeCandidateCount < 3 || current == g_chargingState) return;
+
+    const uint8_t previousLevel = g_batteryLevel;
+    const uint8_t previousChargingState = g_chargingState;
+    g_chargingState = current;
+    if (previousChargingState == 1 && g_chargingState == 0) g_lastLowBatteryBand = 0;
+    if (g_chargingState == 2) g_batteryLevel = 100;
+    setStatusLed(g_ledActivityOn);
+    publishBatteryIfChanged(previousLevel, true);
+    Serial.printf("  Charging state: %u\n", g_chargingState);
+}
+
+static void pollBattery(bool force = false) {
     uint32_t now = millis();
-    if (now - g_lastBatteryTick < 60000) return; // 60 秒
+    if (!force && now - g_lastBatteryTick < BATTERY_SAMPLE_INTERVAL_MS) return;
+    // 大电流录音和播放会造成短暂压降，避免把它误判成电量下降。
+    if (!force && (g_audioState != AUDIO_IDLE ||
+                   g_audioTransferState == AUDIO_TRANSFER_SENDING ||
+                   g_ttsState != TTS_IDLE)) return;
     g_lastBatteryTick = now;
 
-    if (g_batteryLevel > 5) {
-        g_batteryLevel--;
-        Serial.print("  Battery: ");
-        Serial.println(g_batteryLevel);
-
-        if (pBatteryLevel) {
-            pBatteryLevel->setValue(&g_batteryLevel, 1);
-            pBatteryLevel->notify();
-        }
-
-        // 低电警告
-        if (g_batteryLevel <= 20 && !g_lowBatterySent) {
-            g_lowBatterySent = true;
-            sendLowBattery();
-        }
-
-        sendStatusChanged();
+    const uint16_t measuredMv = readBatteryMillivolts();
+    if (measuredMv < 2500 || measuredMv > 4500) {
+        Serial.printf("  [WARN] Battery ADC out of range: %u mV; check GPIO1 divider\n", measuredMv);
+        return;
     }
+    g_filteredBatteryMv = g_filteredBatteryMv == 0
+        ? measuredMv
+        : (uint16_t)((g_filteredBatteryMv * 3UL + measuredMv) / 4UL);
+    const uint8_t previousLevel = g_batteryLevel;
+    uint8_t nextLevel = batteryPercentFromMillivolts(g_filteredBatteryMv);
+    if (g_chargingState == 2) nextLevel = 100;
+    else if (g_chargingState == 1 && nextLevel >= 100) nextLevel = 99;
+    g_batteryLevel = nextLevel;
+    publishBatteryIfChanged(previousLevel, false);
+    Serial.printf("  Battery: %u mV, %u%%\n", g_filteredBatteryMv, g_batteryLevel);
 }
 
 // =============================================================================
@@ -2303,7 +2411,7 @@ class ServerCB : public NimBLEServerCallbacks {
         clearCache();
         g_connected = true;
         g_connHandle = connInfo.getConnHandle();
-        g_lowBatterySent = false;
+        g_lastLowBatteryBand = 0;
         requestAdvertisingMode(false);
         Serial.println("<<< Client connected >>>");
     }
@@ -2575,8 +2683,18 @@ void setup() {
     pinMode(PIN_BUTTON, INPUT_PULLUP);
     pinMode(PIN_ALERT, OUTPUT);
     pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_TP4056_CHRG, INPUT_PULLUP);
+    pinMode(PIN_TP4056_STDBY, INPUT_PULLUP);
+    pinMode(PIN_BATTERY_ADC, INPUT);
+    analogReadResolution(12);
+    analogSetPinAttenuation(PIN_BATTERY_ADC, ADC_11db);
     digitalWrite(PIN_ALERT, LOW);
     digitalWrite(PIN_LED, LOW);
+    g_chargingState = readChargingState();
+    g_chargeCandidate = g_chargingState;
+    g_chargeCandidateCount = 3;
+    setStatusLed(false);
+    pollBattery(true);
 
     g_preferencesReady = g_preferences.begin("yuntuan", false);
     if (g_preferencesReady) {
@@ -2805,7 +2923,8 @@ void loop() {
     pollAudioTransfer();
     pollTtsPlayback();
 
-    // ── 电量模拟 ──
+    // ── 真实电量与 TP4056 充电状态 ──
+    pollChargingState(now);
     pollBattery();
 
     // ── FIND_DEVICE：GPIO2 振动输出 + MAX98357A 提示音 + 状态灯 ──

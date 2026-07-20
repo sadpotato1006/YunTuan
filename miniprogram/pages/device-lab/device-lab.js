@@ -1,9 +1,11 @@
 const deviceService = require("../../services/device");
 const socialService = require("../../services/social");
+const diagnostics = require("../../services/diagnostics");
 
 Page({
   data: {
     operating: false,
+    diagnosticCount: diagnostics.getEvents().length,
     device: {
       connected: false,
       ready: false,
@@ -25,6 +27,7 @@ Page({
           protocolMajor: state.protocolMajor,
           protocolMinor: state.protocolMinor,
           battery: state.battery,
+          chargingState: state.chargingState,
           name: state.name,
           modelNumber: state.modelNumber,
           firmwareRevision: state.firmwareRevision,
@@ -42,7 +45,10 @@ Page({
     try {
       await deviceService.initialize();
       const result = await deviceService.getDevice();
-      this.setData({ device: Object.assign({}, this.data.device, result.data.device) });
+      this.setData({
+        device: Object.assign({}, this.data.device, result.data.device),
+        diagnosticCount: diagnostics.getEvents().length
+      });
     } catch (error) {
       this.showError(error);
     }
@@ -198,6 +204,29 @@ Page({
   },
 
   goBleDebug() { wx.navigateTo({ url: "/pages/ble-debug/ble-debug" }); },
+
+  copyDiagnosticReport() {
+    const report = diagnostics.buildReport(this.data.device);
+    wx.setClipboardData({
+      data: report,
+      success: () => wx.showToast({ title: "诊断报告已复制", icon: "success" })
+    });
+  },
+
+  clearDiagnosticReport() {
+    wx.showModal({
+      title: "清空诊断记录",
+      content: "只会清除本机诊断事件，不影响聊天、情绪或社交数据。",
+      confirmText: "清空",
+      confirmColor: "#C06052",
+      success: result => {
+        if (!result.confirm) return;
+        diagnostics.clear();
+        this.setData({ diagnosticCount: 0 });
+        wx.showToast({ title: "已清空", icon: "success" });
+      }
+    });
+  },
 
   showError(error) {
     wx.showToast({ title: error.message || "调试操作失败", icon: "none", duration: 2600 });

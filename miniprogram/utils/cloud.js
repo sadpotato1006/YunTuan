@@ -1,10 +1,13 @@
 const config = require("../config/index");
+const diagnostics = require("../services/diagnostics");
 const CLOUD_CALL_TIMEOUT_MS = 30000;
 
 /**
  * 统一调用微信云函数，并把云端错误转换为页面可直接展示的 Error。
  */
 function callCloudFunction(name, data) {
+  const startedAt = Date.now();
+  const action = data && data.action ? String(data.action) : "call";
   return new Promise((resolve, reject) => {
     if (!config.usesCloudBackend()) {
       reject(new Error("当前未启用云开发模式"));
@@ -29,18 +32,24 @@ function callCloudFunction(name, data) {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      diagnostics.measure("cloud", `${name}.${action}`, startedAt, { ok: false, timeout: true }, "error");
       reject(new Error("云函数调用超时，请稍后重试"));
     }, CLOUD_CALL_TIMEOUT_MS);
     const resolveOnce = value => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      diagnostics.measure("cloud", `${name}.${action}`, startedAt, { ok: true });
       resolve(value);
     };
     const rejectOnce = error => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      diagnostics.measure("cloud", `${name}.${action}`, startedAt, {
+        ok: false,
+        code: Number(error && (error.code || error.errCode)) || 0
+      }, "error");
       reject(error);
     };
 

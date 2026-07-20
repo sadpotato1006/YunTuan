@@ -86,7 +86,7 @@ function readValue(characteristicId) {
   const normalized = normalize(characteristicId);
   if (same(normalized, UUIDS.batteryLevel)) return new Uint8Array([78]).buffer;
   if (same(normalized, UUIDS.modelNumber)) return asciiToBuffer("YT-SIM-01");
-  if (same(normalized, UUIDS.firmwareRevision)) return asciiToBuffer("0.7.0");
+  if (same(normalized, UUIDS.firmwareRevision)) return asciiToBuffer("0.8.0");
   if (same(normalized, UUIDS.hardwareRevision)) return asciiToBuffer("SIM-A1");
   if (same(normalized, UUIDS.protocolInfo)) return protocolInfoBytes().buffer;
   throw new Error("这个模拟特征值没有可读取数据");

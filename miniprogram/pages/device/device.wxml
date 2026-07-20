@@ -18,7 +18,11 @@
         <text class="owner-nickname">{{socialProfile.nickname}}</text>
         <text class="device-name">{{device.name}}</text>
       </view>
-      <text wx:if="{{device.ready && device.battery !== null}}" class="battery-number">{{device.battery}}%</text>
+      <view wx:if="{{device.ready && device.battery !== null}}" class="battery-summary">
+        <text class="battery-number">{{device.battery}}%</text>
+        <text wx:if="{{device.chargingState === 1}}" class="charging-badge">充电中</text>
+        <text wx:elif="{{device.chargingState === 2}}" class="charging-badge full">已充满</text>
+      </view>
     </view>
     <view class="connection-line {{device.ready ? 'connected' : ''}}">
       {{device.ready ? (device.simulated ? '模拟挂件已就绪' : '云团挂件已就绪') : (device.connected ? '正在初始化设备…' : statusText)}}
@@ -26,7 +30,7 @@
     <view wx:if="{{device.ready && device.battery !== null}}" class="battery-wrap">
       <view class="battery-fill" style="width: {{device.battery}}%"></view>
     </view>
-    <text wx:if="{{device.battery !== null && device.battery <= 20}}" class="low-battery">电量较低，请及时充电</text>
+    <text wx:if="{{device.battery !== null && device.battery <= 20 && device.chargingState !== 1 && device.chargingState !== 2}}" class="low-battery">电量较低，请及时充电</text>
     <text wx:if="{{device.errorMessage}}" class="error-text">{{device.errorMessage}}</text>
   </view>
 

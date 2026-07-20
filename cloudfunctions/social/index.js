@@ -1,5 +1,15 @@
 const cloud = require("wx-server-sdk");
 const crypto = require("crypto");
+const {
+  publicError, success, normalizeProfile, toPublicProfile, toPrivateProfile, isNotFoundError,
+  normalizeToken, cleanText, isManagedAvatar, isManagedContactQr, sha256, tokenDocumentId,
+  greetingDocumentId, matchDocumentId, conversationDocumentId, soloTestPeerOwnerKey,
+  contactDocumentId, contactFileDocumentId, blockDocumentId, getConversationPeer,
+  cleanMessageText, containsRestrictedLink, normalizeContactOptions, toStoredContactItem,
+  toPublicContact, profileContactQrIds, contactRecordQrIds, normalizeContactNotice,
+  beijingDayKey, normalizeRequestId, toPublicMessage, normalizeOpaqueId, withoutDocumentId
+} = require("./social-utils");
+const { createSocialInbox, socialInboxSortKey } = require("./social-inbox");
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
@@ -27,13 +37,30 @@ const MESSAGE_LIMIT_PER_DAY = 200;
 const GREETING_PRE_REPLY_MESSAGE_LIMIT = 3;
 const CONTACT_REQUEST_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CONTACT_STAGE_TTL_MS = 24 * 60 * 60 * 1000;
-const INTENTIONS = new Set(["chat", "buddy", "quiet"]);
 const REPORT_REASONS = new Set(["spam", "harassment", "fraud", "inappropriate", "other"]);
 const SOLO_TEST_ACTIONS = new Set(["message", "request_contact", "accept_contact", "share_contact"]);
 const MESSAGE_PAGE_SIZE = 30;
 const MESSAGE_PAGE_SIZE_MAX = 50;
-const INBOX_PAGE_SIZE = 20;
-const INBOX_PAGE_SIZE_MAX = 50;
+
+const getSocialInbox = createSocialInbox({
+  db,
+  command,
+  collections: {
+    profiles: PROFILE_COLLECTION,
+    greetings: GREETING_COLLECTION,
+    matches: MATCH_COLLECTION
+  },
+  readDocument: (...args) => readDocument(...args),
+  readDocuments: (...args) => readDocuments(...args),
+  ensureConversation: (...args) => ensureConversation(...args),
+  isBlockedBetween: (...args) => isBlockedBetween(...args),
+  greetingDocumentId,
+  matchDocumentId,
+  toPublicProfile,
+  normalizeContactNotice,
+  withoutDocumentId,
+  publicError
+});
 
 exports.main = async event => {
   try {
@@ -521,158 +548,6 @@ async function createMatchPair(firstOwnerKey, secondOwnerKey, matchedAt, noticeO
     await db.collection(MATCH_COLLECTION).doc(documentId).set({ data: record });
   }));
   return conversationId;
-}
-
-async function getSocialInbox(ownerKey, options) {
-  const source = options && typeof options === "object" ? options : {};
-  const section = ["all", "friends", "greetings"].includes(source.section)
-    ? source.section
-    : "all";
-  const cursor = normalizeInboxCursor(source.cursor);
-  const pageSize = normalizeInboxPageSize(source.pageSize);
-  await backfillOwnerInboxSortKeys(ownerKey, section);
-
-  const greetingPage = section === "friends"
-    ? emptyInboxPage()
-    : await readInboxPage(GREETING_COLLECTION, {
-      recipientOwnerKey: ownerKey,
-      status: "pending"
-    }, cursor, pageSize);
-  const matchPage = section === "greetings"
-    ? emptyInboxPage()
-    : await readInboxPage(MATCH_COLLECTION, { ownerKey }, cursor, pageSize);
-
-  const greetings = (await Promise.all(greetingPage.records.map(async record => {
-    const profile = await readDocument(PROFILE_COLLECTION, record.senderOwnerKey);
-    return profile ? {
-      greetingId: record._id || greetingDocumentId(record.senderOwnerKey, ownerKey),
-      createdAt: Number(record.createdAt) || 0,
-      profile: toPublicProfile(profile)
-    } : null;
-  }))).filter(Boolean);
-
-  const matches = (await Promise.all(matchPage.records.map(async record => {
-    if (await isBlockedBetween(ownerKey, record.peerOwnerKey)) return null;
-    const profile = await readDocument(PROFILE_COLLECTION, record.peerOwnerKey);
-    const conversationId = record.conversationId || await ensureConversation(
-      ownerKey,
-      record.peerOwnerKey,
-      record.matchedAt
-    );
-    return profile ? {
-      matchId: record._id || matchDocumentId(ownerKey, record.peerOwnerKey),
-      conversationId,
-      matchedAt: Number(record.matchedAt) || 0,
-      activityAt: inboxTimestamp(record.inboxSortKey),
-      newMatch: record.newMatch === true,
-      unreadCount: Math.max(0, Number(record.unreadCount) || 0),
-      contactNotice: normalizeContactNotice(record.contactNotice),
-      lastMessagePreview: String(record.lastMessagePreview || ""),
-      lastMessageAt: Number(record.lastMessageAt) || 0,
-      profile: toPublicProfile(profile)
-    } : null;
-  }))).filter(Boolean);
-
-  return {
-    greetings,
-    matches,
-    pagination: {
-      greetings: { hasMore: greetingPage.hasMore, nextCursor: greetingPage.nextCursor },
-      friends: { hasMore: matchPage.hasMore, nextCursor: matchPage.nextCursor }
-    }
-  };
-}
-
-async function readInboxPage(collectionName, equalityQuery, cursor, pageSize) {
-  const query = Object.assign({}, equalityQuery);
-  if (cursor) query.inboxSortKey = command.lt(cursor);
-  const response = await db.collection(collectionName)
-    .where(query)
-    .orderBy("inboxSortKey", "desc")
-    .limit(pageSize + 1)
-    .get();
-  const records = response && Array.isArray(response.data) ? response.data : [];
-  const hasMore = records.length > pageSize;
-  const pageRecords = records.slice(0, pageSize);
-  const last = pageRecords[pageRecords.length - 1];
-  return {
-    records: pageRecords,
-    hasMore,
-    nextCursor: hasMore && last ? String(last.inboxSortKey || "") : ""
-  };
-}
-
-function emptyInboxPage() {
-  return { records: [], hasMore: false, nextCursor: "" };
-}
-
-async function backfillOwnerInboxSortKeys(ownerKey, section) {
-  const profile = await readDocument(PROFILE_COLLECTION, ownerKey);
-  const jobs = [];
-  const needsGreetings = section !== "friends" && (!profile || profile.inboxGreetingSortVersion !== 1);
-  const needsMatches = section !== "greetings" && (!profile || profile.inboxMatchSortVersion !== 1);
-  if (needsGreetings) {
-    jobs.push(backfillInboxCollection(GREETING_COLLECTION, {
-      recipientOwnerKey: ownerKey,
-      status: "pending"
-    }, record => Number(record.createdAt) || Number(record.updatedAt) || Date.now()));
-  }
-  if (needsMatches) {
-    jobs.push(backfillInboxCollection(MATCH_COLLECTION, { ownerKey }, record => (
-      Number(record.lastMessageAt) || Number(record.matchedAt) || Number(record.updatedAt) || Date.now()
-    )));
-  }
-  if (!jobs.length) return;
-  const results = await Promise.all(jobs);
-  const markerData = {};
-  let resultIndex = 0;
-  if (needsGreetings) {
-    if (results[resultIndex] < 100) markerData.inboxGreetingSortVersion = 1;
-    resultIndex += 1;
-  }
-  if (needsMatches && results[resultIndex] < 100) markerData.inboxMatchSortVersion = 1;
-  if (Object.keys(markerData).length && profile) {
-    await db.collection(PROFILE_COLLECTION).doc(ownerKey).set({
-      data: Object.assign({}, withoutDocumentId(profile), markerData)
-    });
-  }
-}
-
-async function backfillInboxCollection(collectionName, query, timestampForRecord) {
-  const records = await readDocuments(collectionName, query, 100);
-  await Promise.all(records.filter(record => !record.inboxSortKey).map(record => {
-    const documentId = String(record._id || "");
-    if (!/^[a-f0-9]{64}$/.test(documentId)) return Promise.resolve();
-    return db.collection(collectionName).doc(documentId).set({
-      data: Object.assign({}, withoutDocumentId(record), {
-        inboxSortKey: socialInboxSortKey(timestampForRecord(record), documentId)
-      })
-    });
-  }));
-  return records.length;
-}
-
-function normalizeInboxPageSize(value) {
-  const pageSize = Math.floor(Number(value) || INBOX_PAGE_SIZE);
-  return Math.max(1, Math.min(INBOX_PAGE_SIZE_MAX, pageSize));
-}
-
-function normalizeInboxCursor(value) {
-  const cursor = String(value || "").trim();
-  if (!cursor) return "";
-  if (!/^\d{13}:[a-f0-9]{64}$/.test(cursor)) {
-    throw publicError(400, "伙伴列表分页位置无效");
-  }
-  return cursor;
-}
-
-function socialInboxSortKey(timestamp, documentId) {
-  const safeTimestamp = Math.max(0, Math.floor(Number(timestamp) || Date.now()));
-  return `${String(safeTimestamp).padStart(13, "0")}:${String(documentId || "")}`;
-}
-
-function inboxTimestamp(sortKey) {
-  return Number(String(sortKey || "").slice(0, 13)) || 0;
 }
 
 async function ensureConversation(firstOwnerKey, secondOwnerKey, createdAtValue) {
@@ -1332,7 +1207,7 @@ async function finalizeContactQr(ownerKey, fileId, profileOptionId) {
 }
 
 async function cleanupExpiredStagedContactQrs(ownerKey) {
-  const records = await readDocuments(CONTACT_FILE_COLLECTION, { ownerKey }, 100);
+  const records = await readAllDocuments(CONTACT_FILE_COLLECTION, { ownerKey });
   const now = Date.now();
   const expired = records.filter(record => (
     record.status === "staged" && Number(record.expiresAt) > 0 && Number(record.expiresAt) <= now
@@ -1474,12 +1349,12 @@ async function isBlockedBetween(firstOwnerKey, secondOwnerKey) {
 async function deleteMyData(ownerKey) {
   const testPeerOwnerKey = soloTestPeerOwnerKey(ownerKey);
   const profile = await readDocument(PROFILE_COLLECTION, ownerKey);
-  const ownedContacts = await readDocuments(CONTACT_COLLECTION, { ownerKey }, 100);
-  const peerContacts = await readDocuments(CONTACT_COLLECTION, { peerOwnerKey: ownerKey }, 100);
-  const contactFileRecords = await readDocuments(CONTACT_FILE_COLLECTION, { ownerKey }, 100);
+  const ownedContacts = await readAllDocuments(CONTACT_COLLECTION, { ownerKey });
+  const peerContacts = await readAllDocuments(CONTACT_COLLECTION, { peerOwnerKey: ownerKey });
+  const contactFileRecords = await readAllDocuments(CONTACT_FILE_COLLECTION, { ownerKey });
   const contactQrRecords = ownedContacts.concat(peerContacts)
-    .filter(record => isManagedContactQr(record.qrCodeFileId))
-    .map(record => ({ fileId: record.qrCodeFileId, ownerKey: record.ownerKey }));
+    .flatMap(record => contactRecordQrIds(record)
+      .map(fileId => ({ fileId, ownerKey: record.ownerKey })));
   contactFileRecords.forEach(record => {
     if (isManagedContactQr(record.fileId)) contactQrRecords.push({ fileId: record.fileId, ownerKey });
   });
@@ -1543,51 +1418,6 @@ async function registerTokenOwner(tokenId, ownerKey, now) {
       data: { ownerKey, expiresAt: now + TOKEN_TTL_MS, updatedAt: now }
     });
   }, 5);
-}
-
-function normalizeProfile(value) {
-  const source = value && typeof value === "object" ? value : {};
-  const avatarType = source.avatarType === "custom" ? "custom" : "virtual";
-  const avatarValue = cleanText(source.avatarValue, avatarType === "custom" ? 512 : 8, "头像不能为空");
-  if (avatarType === "custom" && !isManagedAvatar(avatarValue)) {
-    throw publicError(400, "自定义头像必须先上传到云存储");
-  }
-  const avatarColor = /^#[0-9A-Fa-f]{6}$/.test(source.avatarColor || "")
-    ? source.avatarColor
-    : "#DFECE5";
-  const nickname = cleanText(source.nickname, 16, "请填写昵称");
-  const bio = cleanText(source.bio, 60, "请填写一句话介绍");
-  const tags = Array.from(new Set((Array.isArray(source.tags) ? source.tags : [])
-    .map(tag => cleanText(tag, 8, ""))
-    .filter(Boolean)))
-    .slice(0, 3);
-  const intention = INTENTIONS.has(source.intention) ? source.intention : "chat";
-  return { avatarType, avatarValue, avatarColor, nickname, bio, tags, intention };
-}
-
-function toPublicProfile(record) {
-  const profile = {
-    avatarType: record.avatarType,
-    avatarValue: record.avatarValue,
-    avatarColor: record.avatarColor,
-    nickname: record.nickname,
-    bio: record.bio,
-    tags: Array.isArray(record.tags) ? record.tags.slice(0, 3) : [],
-    intention: record.intention,
-    intentionLabel: record.intention === "buddy"
-      ? "找搭子"
-      : (record.intention === "quiet" ? "暂不打扰" : "可以聊天")
-  };
-  if (record.soloTestForOwnerKey) profile.isSoloTest = true;
-  return profile;
-}
-
-function toPrivateProfile(record) {
-  const profile = toPublicProfile(record);
-  if (Array.isArray(record && record.contactOptions) && record.contactOptions.length) {
-    profile.legacyContactOptions = normalizeContactOptions(record.contactOptions);
-  }
-  return profile;
 }
 
 async function assertResolveQuota(ownerKey) {
@@ -1671,6 +1501,23 @@ async function readDocuments(collectionName, query, limit) {
   return response && Array.isArray(response.data) ? response.data : [];
 }
 
+async function readAllDocuments(collectionName, query, pageSize) {
+  const size = Math.max(20, Math.min(100, Number(pageSize) || 100));
+  const records = [];
+  let offset = 0;
+  while (true) {
+    let request = db.collection(collectionName).where(query);
+    if (offset && typeof request.skip === "function") request = request.skip(offset);
+    else if (offset) break;
+    const response = await request.limit(size).get();
+    const page = response && Array.isArray(response.data) ? response.data : [];
+    records.push(...page);
+    if (page.length < size) break;
+    offset += page.length;
+  }
+  return records;
+}
+
 async function removeDocument(collectionName, id) {
   try {
     await db.collection(collectionName).doc(id).remove();
@@ -1680,241 +1527,11 @@ async function removeDocument(collectionName, id) {
 }
 
 async function removeWhere(collectionName, query) {
-  await db.collection(collectionName).where(query).remove();
-}
-
-function isNotFoundError(error) {
-  const message = String(error && (error.errMsg || error.message) || "");
-  return message.includes("does not exist") ||
-    message.includes("NOT_FOUND") ||
-    message.includes("DOCUMENT_NOT_EXIST") ||
-    message.includes("-502005");
-}
-
-function normalizeToken(value) {
-  const token = Number(value);
-  if (!Number.isInteger(token) || token <= 0 || token > 0xFFFFFFFF) {
-    throw publicError(400, "匿名设备令牌格式不正确");
+  for (let batch = 0; batch < 200; batch += 1) {
+    const records = await readDocuments(collectionName, query, 100);
+    if (!records.length) return;
+    await Promise.all(records.map(record => removeDocument(collectionName, record._id)));
+    if (records.length < 100) return;
   }
-  return token >>> 0;
-}
-
-function cleanText(value, maxLength, emptyMessage) {
-  const text = String(value || "").trim().replace(/\s+/g, " ");
-  if (!text && emptyMessage) throw publicError(400, emptyMessage);
-  if (Array.from(text).length > maxLength) throw publicError(400, `内容不能超过 ${maxLength} 个字符`);
-  return text;
-}
-
-function isManagedAvatar(value) {
-  return typeof value === "string" && value.startsWith("cloud://") && value.includes("/social-avatars/");
-}
-
-function isManagedContactQr(value) {
-  return typeof value === "string" && value.startsWith("cloud://") && value.includes("/social-contact-qrs/");
-}
-
-function tokenDocumentId(appid, token) {
-  return sha256(`${appid}:social-token:${token >>> 0}`);
-}
-
-function greetingDocumentId(senderOwnerKey, recipientOwnerKey) {
-  return sha256(`greeting:${senderOwnerKey}:${recipientOwnerKey}`);
-}
-
-function matchDocumentId(ownerKey, peerOwnerKey) {
-  return sha256(`match:${ownerKey}:${peerOwnerKey}`);
-}
-
-function conversationDocumentId(firstOwnerKey, secondOwnerKey) {
-  const members = [firstOwnerKey, secondOwnerKey].sort();
-  return sha256(`conversation:${members[0]}:${members[1]}`);
-}
-
-function soloTestPeerOwnerKey(ownerKey) {
-  return sha256(`solo-test-peer:${ownerKey}`);
-}
-
-function contactDocumentId(conversationId, ownerKey) {
-  return sha256(`contact:${conversationId}:${ownerKey}`);
-}
-
-function contactFileDocumentId(fileId) {
-  return sha256(`contact-file:${fileId}`);
-}
-
-function blockDocumentId(blockerOwnerKey, blockedOwnerKey) {
-  return sha256(`block:${blockerOwnerKey}:${blockedOwnerKey}`);
-}
-
-function getConversationPeer(conversation, ownerKey) {
-  if (!conversation) return "";
-  if (conversation.memberAOwnerKey === ownerKey) return conversation.memberBOwnerKey || "";
-  if (conversation.memberBOwnerKey === ownerKey) return conversation.memberAOwnerKey || "";
-  return "";
-}
-
-function cleanMessageText(value) {
-  const text = String(value || "").trim();
-  if (!text) throw publicError(400, "消息不能为空");
-  if (Array.from(text).length > 300) throw publicError(400, "消息不能超过 300 个字符");
-  if (containsRestrictedLink(text)) {
-    throw publicError(400, "为保护双方安全，伙伴聊天暂不支持发送网址或外部链接");
-  }
-  if (containsDirectContactDetails(text)) {
-    throw publicError(400, "请使用双方确认后的“交换联系方式”功能分享联系方式");
-  }
-  return text;
-}
-
-function containsRestrictedLink(text) {
-  return /(?:https?:\/\/|www\.|weixin:\/\/|wxp:\/\/|[a-z0-9-]+\.(?:com|cn|net|org|top|xyz|io)(?:[\s/]|$))/i.test(text);
-}
-
-function containsDirectContactDetails(text) {
-  if (/(?:^|\D)1[3-9]\d{9}(?:\D|$)/.test(text)) return true;
-  return /(?:微信号?|vx|v信|手机号|电话号码?)\s*[:：]?\s*[A-Za-z0-9_-]{5,}/i.test(text);
-}
-
-function normalizeContactOptions(value) {
-  const source = Array.isArray(value) ? value : [];
-  if (source.length > 8) throw publicError(400, "私密分享资料最多保存 8 条");
-  const usedIds = new Set();
-  return source.map(item => {
-    const option = item && typeof item === "object" ? item : {};
-    const id = String(option.id || "").trim();
-    if (!/^[A-Za-z0-9_-]{8,64}$/.test(id) || usedIds.has(id)) {
-      throw publicError(400, "私密分享资料编号无效，请删除后重新添加");
-    }
-    usedIds.add(id);
-    const type = ["wechat", "phone", "qr"].includes(option.type) ? option.type : "";
-    if (!type) throw publicError(400, "私密分享资料类型无效");
-    const defaultLabel = type === "wechat" ? "微信号" : (type === "phone" ? "手机号" : "联系二维码");
-    const label = cleanText(option.label, 12, "") || defaultLabel;
-    if (type === "qr") {
-      const qrCodeFileId = String(option.qrCodeFileId || "").trim();
-      if (!isManagedContactQr(qrCodeFileId)) {
-        throw publicError(400, `${label}的二维码尚未上传完成`);
-      }
-      return { id, type, label, qrCodeFileId };
-    }
-    const contactValue = String(option.value || "").trim().replace(/\s+/g, type === "phone" ? "" : " ");
-    if (type === "wechat") {
-      if (!/^[^\s]{5,32}$/.test(contactValue) || containsRestrictedLink(contactValue)) {
-        throw publicError(400, `${label}格式不正确`);
-      }
-    } else {
-      const phoneDigits = contactValue.replace(/\D/g, "");
-      if (!/^\+?[0-9-]{6,20}$/.test(contactValue) || phoneDigits.length < 6 || phoneDigits.length > 15) {
-        throw publicError(400, `${label}格式不正确`);
-      }
-    }
-    return { id, type, label, value: contactValue };
-  });
-}
-
-function toStoredContactItem(option) {
-  return option.type === "qr"
-    ? { id: option.id, type: option.type, label: option.label, qrCodeFileId: option.qrCodeFileId }
-    : { id: option.id, type: option.type, label: option.label, value: option.value };
-}
-
-function toPublicContact(record) {
-  let items;
-  if (record && Array.isArray(record.items)) {
-    items = normalizeContactOptions(record.items);
-  } else {
-    const legacy = [];
-    if (record && record.wechatId) legacy.push({
-      id: "legacy_wechat",
-      type: "wechat",
-      label: "微信号",
-      value: record.wechatId
-    });
-    if (record && record.phone) legacy.push({
-      id: "legacy_phone",
-      type: "phone",
-      label: "手机号",
-      value: record.phone
-    });
-    if (record && isManagedContactQr(record.qrCodeFileId)) legacy.push({
-      id: "legacy_qrcode",
-      type: "qr",
-      label: "联系二维码",
-      qrCodeFileId: record.qrCodeFileId
-    });
-    items = normalizeContactOptions(legacy);
-  }
-  return { items, updatedAt: Number(record && record.updatedAt) || 0 };
-}
-
-function profileContactQrIds(record) {
-  return (record && Array.isArray(record.contactOptions) ? record.contactOptions : [])
-    .filter(option => option && option.type === "qr" && isManagedContactQr(option.qrCodeFileId))
-    .map(option => option.qrCodeFileId);
-}
-
-function contactRecordQrIds(record) {
-  if (!record) return [];
-  if (Array.isArray(record.items)) {
-    return record.items
-      .filter(item => item && item.type === "qr" && isManagedContactQr(item.qrCodeFileId))
-      .map(item => item.qrCodeFileId);
-  }
-  return isManagedContactQr(record.qrCodeFileId) ? [record.qrCodeFileId] : [];
-}
-
-function normalizeContactNotice(value) {
-  const allowed = new Set(["requested", "accepted", "declined", "contact_updated", "contact_withdrawn"]);
-  return allowed.has(value) ? value : "";
-}
-
-function beijingDayKey(timestamp) {
-  const date = new Date((Number(timestamp) || Date.now()) + 8 * 60 * 60 * 1000);
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-}
-
-function normalizeRequestId(value) {
-  const requestId = String(value || "").trim();
-  if (!/^[A-Za-z0-9_-]{12,80}$/.test(requestId)) {
-    throw publicError(400, "消息请求编号无效");
-  }
-  return requestId;
-}
-
-function toPublicMessage(record, ownerKey) {
-  return {
-    id: String(record._id || ""),
-    sender: record.senderOwnerKey === ownerKey ? "me" : "peer",
-    content: String(record.content || ""),
-    createdAt: Number(record.createdAt) || 0
-  };
-}
-
-function normalizeOpaqueId(value, length, message) {
-  const id = String(value || "").trim().toLowerCase();
-  const pattern = new RegExp(`^[a-f0-9]{${length}}$`);
-  if (!pattern.test(id)) throw publicError(400, message);
-  return id;
-}
-
-function withoutDocumentId(value) {
-  const copy = Object.assign({}, value || {});
-  delete copy._id;
-  return copy;
-}
-
-function sha256(value) {
-  return crypto.createHash("sha256").update(String(value)).digest("hex");
-}
-
-function success(data) {
-  return { code: 0, message: "success", data };
-}
-
-function publicError(code, message) {
-  const error = new Error(message);
-  error.code = code;
-  error.publicMessage = message;
-  return error;
+  throw new Error(`批量删除 ${collectionName} 超过安全上限，请重试`);
 }

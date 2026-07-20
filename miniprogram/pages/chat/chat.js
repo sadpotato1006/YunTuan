@@ -1,6 +1,8 @@
 const chatService = require("../../services/chat");
 const deviceAudioService = require("../../services/yuntuan-audio");
 const deviceTtsService = require("../../services/yuntuan-tts");
+const diagnostics = require("../../services/diagnostics");
+const { buildVoiceLatencyMetrics } = require("./voice-latency");
 
 Page({
   data: {
@@ -723,22 +725,9 @@ Page({
   },
 
   logVoiceLatency(trace) {
-    const firstPlaybackAt = trace.firstPlaybackAt || Date.now();
-    const metrics = {
-      recordingMs: trace.recordingMs || 0,
-      bleUploadMs: trace.bleUploadMs || 0,
-      bleMtu: trace.bleMtu || 0,
-      bleChunkPayload: trace.bleChunkPayload || 0,
-      blePacketCount: trace.blePacketCount || 0,
-      bleEncodedBytes: trace.bleEncodedBytes || 0,
-      asrMode: trace.asrMode || "unknown",
-      asrMs: trace.asrMs || 0,
-      aiAndNetworkMs: trace.aiAndNetworkMs || 0,
-      firstSpeechSynthesisMs: trace.firstSpeechSynthesisMs || 0,
-      bleDownlinkToPlaybackMs: trace.firstSpeechReadyAt ? firstPlaybackAt - trace.firstSpeechReadyAt : 0,
-      pressToFirstPlaybackMs: firstPlaybackAt - trace.recordingStartedAt
-    };
+    const metrics = buildVoiceLatencyMetrics(trace, Date.now());
     console.info("[VOICE_LATENCY] 挂件语音首包播放耗时", metrics);
+    diagnostics.record("voice", "first_playback", metrics);
   },
 
   clearConversation() {

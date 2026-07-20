@@ -5,6 +5,7 @@ App({
   onLaunch() {
     // Mock 和 HTTP 模式不初始化云开发，未创建云环境也能正常运行。
     if (!config.usesCloudBackend()) return;
+    this._socialBadgePollingActive = true;
 
     if (!config.cloudEnvId) {
       console.warn("云开发环境 ID 未填写，云函数暂不可用");
@@ -31,17 +32,29 @@ App({
   onShow() {
     this.stopSocialBadgePolling();
     if (!config.usesCloudBackend()) return;
-    this._socialBadgeDelay = setTimeout(() => this.refreshSocialBadge(), 1200);
-    this._socialBadgeTimer = setInterval(() => this.refreshSocialBadge(), 30000);
+    this._socialBadgeIdleRounds = 0;
+    this._socialBadgeSignature = "";
+    this.scheduleSocialBadgeRefresh(1200);
   },
 
   onHide() { this.stopSocialBadgePolling(); },
 
   stopSocialBadgePolling() {
-    if (this._socialBadgeDelay) clearTimeout(this._socialBadgeDelay);
-    if (this._socialBadgeTimer) clearInterval(this._socialBadgeTimer);
-    this._socialBadgeDelay = null;
+    this._socialBadgePollingActive = false;
+    if (this._socialBadgeTimer) clearTimeout(this._socialBadgeTimer);
     this._socialBadgeTimer = null;
+  },
+
+  scheduleSocialBadgeRefresh(delay) {
+    if (!this._socialBadgePollingActive) return;
+    if (this._socialBadgeTimer) clearTimeout(this._socialBadgeTimer);
+    this._socialBadgeTimer = setTimeout(async () => {
+      await this.refreshSocialBadge();
+      if (!this._socialBadgePollingActive) return;
+      const idleRounds = Math.max(0, Number(this._socialBadgeIdleRounds) || 0);
+      const nextDelay = idleRounds >= 4 ? 5 * 60 * 1000 : (idleRounds >= 2 ? 2 * 60 * 1000 : 30000);
+      this.scheduleSocialBadgeRefresh(nextDelay);
+    }, Math.max(1000, Number(delay) || 30000));
   },
 
   async refreshSocialBadge(force) {
@@ -57,6 +70,11 @@ App({
         return total + unread + (item.newMatch && unread === 0 ? 1 : 0) +
           (item.contactNotice && !item.newMatch ? 1 : 0);
       }, 0);
+      const signature = `${count}:${greetings[0] && greetings[0].greetingId || ""}:${matches[0] && matches[0].conversationId || ""}`;
+      this._socialBadgeIdleRounds = this._socialBadgeSignature && this._socialBadgeSignature === signature
+        ? Math.min(10, (this._socialBadgeIdleRounds || 0) + 1)
+        : 0;
+      this._socialBadgeSignature = signature;
       this.setSocialBadgeCount(count);
     } catch (error) {
       // 后台轮询失败不打断用户当前操作，进入伙伴页时仍可主动刷新。
@@ -75,6 +93,11 @@ App({
     } else {
       wx.hideTabBarRedDot({ index: 2, fail() {} });
     }
+  },
+
+  wakeSocialBadgeRefresh() {
+    this._socialBadgeIdleRounds = 0;
+    if (this._socialBadgePollingActive) this.scheduleSocialBadgeRefresh(1000);
   },
 
   setSocialForegroundView(value) {

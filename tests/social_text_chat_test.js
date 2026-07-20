@@ -15,7 +15,11 @@ const contactJs = read("miniprogram/pages/social-contact/social-contact.js");
 const contactWxml = read("miniprogram/pages/social-contact/social-contact.wxml");
 const profileService = read("miniprogram/services/social-profile.js");
 const socialService = read("miniprogram/services/social.js");
-const socialCloud = read("cloudfunctions/social/index.js");
+const socialCloud = [
+  read("cloudfunctions/social/index.js"),
+  read("cloudfunctions/social/social-utils.js"),
+  read("cloudfunctions/social/social-inbox.js")
+].join("\n");
 
 assert.ok(appConfig.pages.includes("pages/partners/partners"));
 assert.ok(appConfig.pages.includes("pages/social-chat/social-chat"));
@@ -110,7 +114,7 @@ assert.ok(!socialCloud.includes("subscribeMessage.send"));
 assert.ok(!socialCloud.includes("NOTIFICATION_SUBSCRIPTION_COLLECTION"));
 assert.ok(socialCloud.includes("soloTestPeerOwnerKey"));
 
-const socialChatSources = `${chatJs}\n${chatWxml}`;
+const socialChatSources = `${chatJs}\n${read("miniprogram/pages/social-chat/social-chat-helpers.js")}\n${chatWxml}`;
 ["RecorderManager", "startRecord", "transcribe", "语音消息", "语音通话", "video"].forEach(forbidden => {
   assert.ok(!socialChatSources.includes(forbidden), `伙伴聊天不应包含 ${forbidden}`);
 });
