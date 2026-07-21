@@ -117,16 +117,18 @@
 // =============================================================================
 // 3. GPIO 引脚
 // =============================================================================
-#define PIN_BUTTON                13            // 独立 PTT 按键，低电平有效
+// A1 已焊接硬件契约：以下引脚必须与实物保持一致，禁止在功能重构中改动。
+// tests/hardware_pin_contract_test.js 会在编号漂移时直接失败。
+#define PIN_BUTTON                8             // 独立 PTT 按键，低电平有效
 #define PIN_ALERT                 2             // 蜂鸣器/振动马达
-#define PIN_LED                   47            // 外接状态灯；GPIO8 保留给 MAX98357A DIN
+#define PIN_LED                   48            // 外接状态灯
 #define PIN_BATTERY_ADC           1             // 100k/100k 分压中点，ADC1_CH0
 
 // INMP441：L/R 接 GND，选择左声道。
-#define PIN_MIC_BCLK              5
-#define PIN_MIC_WS                4
-#define PIN_MIC_SD                7
-#define PIN_SPEAKER_DIN           8             // MAX98357A DIN；BCLK/WS 与麦克风共用
+#define PIN_MIC_BCLK              9
+#define PIN_MIC_WS                46
+#define PIN_MIC_SD                4
+#define PIN_SPEAKER_DIN           10            // MAX98357A DIN；BCLK/WS 与麦克风共用
 
 // =============================================================================
 // 3.1 挂件录音与 BLE Audio Transfer v2
@@ -240,11 +242,11 @@ static uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
 // 5. 全局状态
 // =============================================================================
 static uint8_t  g_socialMode    = 0;
-static bool     g_socialReminderEnabled = true;
 static bool     g_vibrationEnabled = true;
-static bool     g_soundEnabled = true;
 static uint8_t  g_bindState     = 0;           // 0=未绑定
-static uint8_t  g_batteryLevel  = 100;
+// 电量值只有在 g_batteryValid=true 时才可信；启动阶段不得伪造 100%。
+static uint8_t  g_batteryLevel  = 0;
+static bool     g_batteryValid  = false;
 static uint32_t g_uptime        = 0;
 static bool     g_connected     = false;
 static uint16_t g_capabilities  = CAPABILITIES;
@@ -253,8 +255,7 @@ static Preferences g_preferences;
 // Alert state (FIND_DEVICE)
 static bool     g_alertActive   = false;
 static uint32_t g_alertEnd      = 0;
-static bool     g_alertToggle   = false;
-static uint32_t g_lastAlertToggle = 0;
+static uint32_t g_alertStartedAt = 0;
 static uint8_t  g_alertType     = 0;
 static uint32_t g_alertTonePhase = 0;
 // Social beacon/scanner state. BLE callbacks only request advertising changes;
@@ -808,7 +809,7 @@ static void handleHello(uint8_t seq) {
 // GET_STATUS 0x02 — 返回电量、预留状态字节、社交模式、运行时间
 static void handleGetStatus(uint8_t seq) {
     uint8_t data[7];
-    data[0] = g_batteryLevel;
+    data[0] = g_batteryValid ? g_batteryLevel : 0xFF;
     data[1] = 0xFF;                            // 不提供充电状态检测
     data[2] = g_socialMode;
     data[3] = g_uptime & 0xFF;
@@ -833,24 +834,23 @@ static void handleSetSocialMode(uint8_t seq, const uint8_t* payload, uint8_t len
     Serial.println(g_socialMode);
 }
 
-// SET_ALERT_SETTINGS 0x09 — 持久化社交提醒、振动和声音策略
+// SET_ALERT_SETTINGS 0x09 — 协议仍保留三字节，产品行为统一为社交震动反馈。
 static void handleSetAlertSettings(uint8_t seq, const uint8_t* payload, uint8_t len) {
     if (len != 3 || payload[0] > 1 || payload[1] > 1 || payload[2] > 1) {
         sendResponse(CMD_SET_ALERT_SETTINGS, seq, STATUS_INVALID_PAYLOAD, nullptr, 0);
         return;
     }
-    g_socialReminderEnabled = payload[0] != 0;
     g_vibrationEnabled = payload[1] != 0;
-    g_soundEnabled = payload[2] != 0;
     if (g_preferencesReady) {
-        g_preferences.putBool("socialAlert", g_socialReminderEnabled);
         g_preferences.putBool("vibration", g_vibrationEnabled);
-        g_preferences.putBool("sound", g_soundEnabled);
+        // 清理旧版本留下的声音设置，避免隐藏开关后仍然响铃。
+        g_preferences.putBool("socialAlert", true);
+        g_preferences.putBool("sound", false);
     }
     uint8_t result[3] = {
-        g_socialReminderEnabled ? (uint8_t)1 : (uint8_t)0,
+        1,
         g_vibrationEnabled ? (uint8_t)1 : (uint8_t)0,
-        g_soundEnabled ? (uint8_t)1 : (uint8_t)0
+        0
     };
     sendResponse(CMD_SET_ALERT_SETTINGS, seq, STATUS_OK, result, 3);
     Serial.printf("  Alert settings: social=%u vibration=%u sound=%u\n",
@@ -866,10 +866,10 @@ static void stopFindDeviceAlert() {
 }
 
 static void startFindDeviceAlert(uint8_t alertType, uint16_t duration) {
+    const uint32_t now = millis();
     g_alertActive = true;
-    g_alertEnd = millis() + duration;
-    g_alertToggle = true;
-    g_lastAlertToggle = millis();
+    g_alertStartedAt = now;
+    g_alertEnd = now + duration;
     g_alertType = alertType;
     g_alertTonePhase = 0;
     digitalWrite(PIN_ALERT, (alertType == 0 || alertType == 2) ? HIGH : LOW);
@@ -884,27 +884,62 @@ static void pollFindDeviceAlert(uint32_t now) {
         return;
     }
 
-    if (now - g_lastAlertToggle >= 250) {
-        g_lastAlertToggle = now;
-        g_alertToggle = !g_alertToggle;
-    }
-
     const bool vibrationEnabled = g_alertType == 0 || g_alertType == 2;
     const bool soundEnabled = g_alertType == 1 || g_alertType == 2;
-    digitalWrite(PIN_ALERT, vibrationEnabled && g_alertToggle ? HIGH : LOW);
-    digitalWrite(PIN_LED, g_alertToggle ? HIGH : LOW);
+    // 采用“高音叮 + 低音咚”的双脉冲节奏，替代旧版连续 880 Hz 方波。
+    const uint16_t cycleMs = (uint16_t)((now - g_alertStartedAt) % 720UL);
+    const bool firstNote = cycleMs < 160;
+    const bool secondNote = cycleMs >= 220 && cycleMs < 440;
+    const bool pulseActive = firstNote || secondNote;
+    digitalWrite(PIN_ALERT, vibrationEnabled && pulseActive ? HIGH : LOW);
+    digitalWrite(PIN_LED, pulseActive ? HIGH : LOW);
 
     // 当前硬件已有 MAX98357A 扬声器。没有额外振动马达时，仍可通过提示音和闪灯找到挂件。
     // 录音或 TTS 占用 I2S 时不抢占音频总线，GPIO2/状态灯提醒仍继续。
     if (!soundEnabled || !g_micReady || g_audioState != AUDIO_IDLE || g_ttsState != TTS_IDLE) return;
 
+    static const int16_t sineTable[32] = {
+        0, 6393, 12539, 18204, 23170, 27245, 30273, 32137,
+        32767, 32137, 30273, 27245, 23170, 18204, 12539, 6393,
+        0, -6393, -12539, -18204, -23170, -27245, -30273, -32137,
+        -32767, -32137, -30273, -27245, -23170, -18204, -12539, -6393
+    };
     static int32_t toneFrame[160];             // 16 kHz 下 10 ms
+    uint16_t noteElapsedMs = 0;
+    uint16_t noteDurationMs = 0;
+    uint16_t frequencyHz = 0;
+    if (firstNote) {
+        noteElapsedMs = cycleMs;
+        noteDurationMs = 160;
+        frequencyHz = 784;                     // G5：“叮”
+    } else if (secondNote) {
+        noteElapsedMs = cycleMs - 220;
+        noteDurationMs = 220;
+        frequencyHz = 659;                     // E5：“咚”
+    } else {
+        g_alertTonePhase = 0;
+    }
+
+    uint32_t amplitude = 4800;
+    if (frequencyHz && noteElapsedMs < 25) {
+        amplitude = amplitude * noteElapsedMs / 25;
+    }
+    if (frequencyHz) {
+        const uint16_t remainingMs = noteDurationMs - noteElapsedMs;
+        if (remainingMs < 70) {
+            const uint32_t releaseAmplitude = 4800UL * remainingMs / 70;
+            if (releaseAmplitude < amplitude) amplitude = releaseAmplitude;
+        }
+    }
+    const uint32_t phaseStep = frequencyHz
+        ? (uint32_t)(((uint64_t)frequencyHz << 32) / TTS_SAMPLE_RATE)
+        : 0;
     for (size_t i = 0; i < 160; i++) {
         int16_t sample = 0;
-        if (g_alertToggle) {
-            sample = g_alertTonePhase < (TTS_SAMPLE_RATE / 2) ? 3500 : -3500;
-            g_alertTonePhase += 880;            // 880 Hz 方波提示音
-            if (g_alertTonePhase >= TTS_SAMPLE_RATE) g_alertTonePhase -= TTS_SAMPLE_RATE;
+        if (frequencyHz) {
+            sample = (int16_t)(((int32_t)sineTable[g_alertTonePhase >> 27] *
+                (int32_t)amplitude) / 32767);
+            g_alertTonePhase += phaseStep;
         }
         toneFrame[i] = (int32_t)sample * 65536;
     }
@@ -1130,7 +1165,7 @@ static void pollSocialInteraction(uint32_t now) {
     }
 
     if (!g_socialAlertPending) return;
-    if (!g_socialMode || !g_socialReminderEnabled || now - g_socialAlertQueuedAt > 3000) {
+    if (!g_socialMode || !g_vibrationEnabled || now - g_socialAlertQueuedAt > 3000) {
         g_socialAlertPending = false;
         return;
     }
@@ -1142,10 +1177,7 @@ static void pollSocialInteraction(uint32_t now) {
     uint32_t token = g_socialAlertToken;
     int8_t rssi = g_socialAlertRssi;
     g_socialAlertPending = false;
-    const uint8_t socialAlertType = g_vibrationEnabled
-        ? (g_soundEnabled ? 2 : 0)
-        : (g_soundEnabled ? 1 : 3);
-    startFindDeviceAlert(socialAlertType, SOCIAL_ALERT_DURATION_MS);
+    startFindDeviceAlert(0, SOCIAL_ALERT_DURATION_MS);
     Serial.print("  SOCIAL_PROXIMITY token=0x");
     Serial.print(token, HEX);
     Serial.print(" filteredRSSI=");
@@ -1250,7 +1282,7 @@ static void dispatchCommand(uint8_t cmd, uint8_t seq,
 // =============================================================================
 static void sendStatusChanged() {
     uint8_t payload[3];
-    payload[0] = g_batteryLevel;
+    payload[0] = g_batteryValid ? g_batteryLevel : 0xFF;
     payload[1] = 0xFF;                         // 不提供充电状态检测
     payload[2] = g_socialMode;
     sendEvent(EVT_STATUS_CHANGED, payload, 3);
@@ -1268,6 +1300,7 @@ static void sendButtonEvent(uint8_t buttonType) {
 }
 
 static void sendLowBattery() {
+    if (!g_batteryValid) return;
     uint8_t payload[1] = { g_batteryLevel };
     sendEvent(EVT_LOW_BATTERY, payload, 1);
 }
@@ -2263,15 +2296,34 @@ static void pollButton() {
 // 11. 真实电池电压
 // =============================================================================
 #define BATTERY_SAMPLE_INTERVAL_MS 30000UL
+#define BATTERY_RETRY_INTERVAL_MS  1000UL
 #define BATTERY_SAMPLE_COUNT       15
-#define BATTERY_DIVIDER_NUMERATOR  2UL          // 100k/100k 分压，电池电压=ADC×2
+#define BATTERY_SETTLING_SAMPLE_COUNT 3
+#define BATTERY_REQUIRED_VALID_SAMPLES   3
+#define BATTERY_REQUIRED_INVALID_SAMPLES 3
+#define BATTERY_PERCENT_HYSTERESIS       2
+#define BATTERY_VALID_MIN_MV       3000
+#define BATTERY_VALID_MAX_MV       4350
+// 100k/100k 分压的标称倍率。实测电池端和 GPIO1 电压后可微调这两个值。
+#define BATTERY_SCALE_NUMERATOR     2000UL
+#define BATTERY_SCALE_DENOMINATOR   1000UL
+#define BATTERY_CALIBRATION_OFFSET_MV 0
 
 static uint32_t g_lastBatteryTick = 0;
 static uint16_t g_filteredBatteryMv = 0;
+static uint16_t g_candidateBatteryMv = 0;
+static uint8_t  g_validBatterySampleStreak = 0;
+static uint8_t  g_invalidBatterySampleStreak = 0;
 static uint8_t  g_lastLowBatteryBand = 0;
 
 static uint16_t readBatteryMillivolts() {
     uint16_t samples[BATTERY_SAMPLE_COUNT];
+    // 现有 100k/100k 分压不改硬件。正式统计前连续做几次预采样，给 ESP32-S3
+    // SAR ADC 的内部采样电容充分稳定，预采样结果不参与电量计算。
+    for (uint8_t i = 0; i < BATTERY_SETTLING_SAMPLE_COUNT; i++) {
+        (void)analogReadMilliVolts(PIN_BATTERY_ADC);
+        delay(2);
+    }
     for (uint8_t i = 0; i < BATTERY_SAMPLE_COUNT; i++) {
         samples[i] = (uint16_t)analogReadMilliVolts(PIN_BATTERY_ADC);
         delay(2);
@@ -2286,7 +2338,10 @@ static uint16_t readBatteryMillivolts() {
         }
         samples[position + 1] = value;
     }
-    return samples[BATTERY_SAMPLE_COUNT / 2] * BATTERY_DIVIDER_NUMERATOR;
+    const int32_t scaled = (int32_t)(samples[BATTERY_SAMPLE_COUNT / 2] *
+        BATTERY_SCALE_NUMERATOR / BATTERY_SCALE_DENOMINATOR) +
+        BATTERY_CALIBRATION_OFFSET_MV;
+    return (uint16_t)(scaled < 0 ? 0 : (scaled > 65535 ? 65535 : scaled));
 }
 
 static uint8_t batteryPercentFromMillivolts(uint16_t millivolts) {
@@ -2316,20 +2371,28 @@ static uint8_t lowBatteryBand(uint8_t percent) {
     return 0;
 }
 
-static void publishBatteryIfChanged(uint8_t previousLevel, bool forceStatus) {
-    if (pBatteryLevel && g_batteryLevel != previousLevel) {
+static void publishBatteryState(bool previousValid, uint8_t previousLevel) {
+    const bool validityChanged = g_batteryValid != previousValid;
+    const bool levelChanged = g_batteryValid &&
+        (!previousValid || g_batteryLevel != previousLevel);
+    if (pBatteryLevel && levelChanged) {
         pBatteryLevel->setValue(&g_batteryLevel, 1);
         pBatteryLevel->notify();
     }
-    const uint8_t band = lowBatteryBand(g_batteryLevel);
-    if (band > g_lastLowBatteryBand) sendLowBattery();
+    const uint8_t band = g_batteryValid ? lowBatteryBand(g_batteryLevel) : 0;
+    if (g_batteryValid && band > g_lastLowBatteryBand) sendLowBattery();
     g_lastLowBatteryBand = band;
-    if (forceStatus || g_batteryLevel != previousLevel) sendStatusChanged();
+    if (validityChanged || levelChanged) sendStatusChanged();
 }
 
 static void pollBattery(bool force = false) {
     uint32_t now = millis();
-    if (!force && now - g_lastBatteryTick < BATTERY_SAMPLE_INTERVAL_MS) return;
+    const bool confirmingReading = !g_batteryValid ||
+        g_validBatterySampleStreak > 0 || g_invalidBatterySampleStreak > 0;
+    const uint32_t interval = confirmingReading
+        ? BATTERY_RETRY_INTERVAL_MS
+        : BATTERY_SAMPLE_INTERVAL_MS;
+    if (!force && now - g_lastBatteryTick < interval) return;
     // 大电流录音和播放会造成短暂压降，避免把它误判成电量下降。
     if (!force && (g_audioState != AUDIO_IDLE ||
                    g_audioTransferState == AUDIO_TRANSFER_SENDING ||
@@ -2337,17 +2400,61 @@ static void pollBattery(bool force = false) {
     g_lastBatteryTick = now;
 
     const uint16_t measuredMv = readBatteryMillivolts();
-    if (measuredMv < 2500 || measuredMv > 4500) {
-        Serial.printf("  [WARN] Battery ADC out of range: %u mV; check GPIO1 divider\n", measuredMv);
+    if (measuredMv < BATTERY_VALID_MIN_MV || measuredMv > BATTERY_VALID_MAX_MV) {
+        g_validBatterySampleStreak = 0;
+        g_candidateBatteryMv = 0;
+        if (g_invalidBatterySampleStreak < BATTERY_REQUIRED_INVALID_SAMPLES) {
+            g_invalidBatterySampleStreak++;
+        }
+        Serial.printf("  [WARN] Battery ADC invalid %u/%u: %u mV; check battery sampling path\n",
+            g_invalidBatterySampleStreak, BATTERY_REQUIRED_INVALID_SAMPLES, measuredMv);
+        if (g_batteryValid &&
+            g_invalidBatterySampleStreak >= BATTERY_REQUIRED_INVALID_SAMPLES) {
+            const bool previousValid = g_batteryValid;
+            const uint8_t previousLevel = g_batteryLevel;
+            g_batteryValid = false;
+            g_filteredBatteryMv = 0;
+            publishBatteryState(previousValid, previousLevel);
+            Serial.println("  Battery unavailable after repeated invalid ADC samples");
+        }
         return;
     }
-    g_filteredBatteryMv = g_filteredBatteryMv == 0
-        ? measuredMv
-        : (uint16_t)((g_filteredBatteryMv * 3UL + measuredMv) / 4UL);
+
+    g_invalidBatterySampleStreak = 0;
+    if (!g_batteryValid) {
+        g_candidateBatteryMv = g_validBatterySampleStreak == 0
+            ? measuredMv
+            : (uint16_t)((g_candidateBatteryMv * 2UL + measuredMv) / 3UL);
+        if (g_validBatterySampleStreak < BATTERY_REQUIRED_VALID_SAMPLES) {
+            g_validBatterySampleStreak++;
+        }
+        Serial.printf("  Battery validating %u/%u: %u mV\n",
+            g_validBatterySampleStreak, BATTERY_REQUIRED_VALID_SAMPLES, measuredMv);
+        if (g_validBatterySampleStreak < BATTERY_REQUIRED_VALID_SAMPLES) return;
+        g_filteredBatteryMv = g_candidateBatteryMv;
+        g_candidateBatteryMv = 0;
+        g_validBatterySampleStreak = 0;
+    } else {
+        // 正常工作时采用 3/4 历史值 + 1/4 新值，避免负载变化造成跳动。
+        g_filteredBatteryMv = (uint16_t)((g_filteredBatteryMv * 3UL + measuredMv) / 4UL);
+    }
+
+    const bool previousValid = g_batteryValid;
     const uint8_t previousLevel = g_batteryLevel;
-    g_batteryLevel = batteryPercentFromMillivolts(g_filteredBatteryMv);
-    publishBatteryIfChanged(previousLevel, false);
-    Serial.printf("  Battery: %u mV, %u%%\n", g_filteredBatteryMv, g_batteryLevel);
+    const uint8_t candidateLevel = batteryPercentFromMillivolts(g_filteredBatteryMv);
+    const uint8_t difference = candidateLevel > previousLevel
+        ? candidateLevel - previousLevel
+        : previousLevel - candidateLevel;
+    const bool crossedLowBatteryBand = previousValid &&
+        lowBatteryBand(candidateLevel) != lowBatteryBand(previousLevel);
+    g_batteryValid = true;
+    if (!previousValid || difference >= BATTERY_PERCENT_HYSTERESIS ||
+        crossedLowBatteryBand || candidateLevel == 0 || candidateLevel == 100) {
+        g_batteryLevel = candidateLevel;
+    }
+    publishBatteryState(previousValid, previousLevel);
+    Serial.printf("  Battery: %u mV, approximately %u%%\n",
+        g_filteredBatteryMv, g_batteryLevel);
 }
 
 // =============================================================================
@@ -2418,12 +2525,16 @@ class EventTxCB : public NimBLECharacteristicCallbacks {
     }
 };
 
-// Battery Level 订阅后立即上报当前值。
+// Battery Level 订阅后只在 ADC 已确认有效时上报当前值。
 class BatteryLevelCB : public NimBLECharacteristicCallbacks {
     void onSubscribe(NimBLECharacteristic* pChar,
                      NimBLEConnInfo& connInfo, uint16_t subValue) override {
         (void)connInfo;
         if (subValue & 0x01) {
+            if (!g_batteryValid) {
+                Serial.println("  Battery Level subscribed; waiting for valid ADC samples");
+                return;
+            }
             pChar->setValue(&g_batteryLevel, 1);
             pChar->notify();
             Serial.println("  Battery Level subscribed; initial value notified");
@@ -2638,14 +2749,18 @@ void setup() {
     analogSetPinAttenuation(PIN_BATTERY_ADC, ADC_11db);
     digitalWrite(PIN_ALERT, LOW);
     digitalWrite(PIN_LED, LOW);
+    // ADC 衰减和引脚复用刚配置完成时先留出稳定时间；readBatteryMillivolts
+    // 还会执行多次不参与统计的预采样。
+    delay(20);
     pollBattery(true);
 
     g_preferencesReady = g_preferences.begin("yuntuan", false);
     if (g_preferencesReady) {
         g_socialMode = g_preferences.getBool("social", false) ? 1 : 0;
-        g_socialReminderEnabled = g_preferences.getBool("socialAlert", true);
         g_vibrationEnabled = g_preferences.getBool("vibration", true);
-        g_soundEnabled = g_preferences.getBool("sound", true);
+        // 旧版本可能保存过声音提醒；新版本统一关闭并迁移为震动反馈。
+        g_preferences.putBool("socialAlert", true);
+        g_preferences.putBool("sound", false);
         Serial.print("  SocialMode restored: ");
         Serial.println(g_socialMode);
     } else {
@@ -2692,8 +2807,9 @@ void setup() {
         Serial.println("  [ERR] Cannot allocate TTS buffer; AudioPlayback capability disabled");
     }
     if (!g_micReady) {
+        g_capabilities &= ~((uint16_t)1 << CAP_AUDIO_UPLOAD);
         g_capabilities &= ~((uint16_t)1 << CAP_AUDIO_PLAYBACK);
-        Serial.println("  [ERR] I2S is unavailable; AudioPlayback capability disabled");
+        Serial.println("  [ERR] I2S is unavailable; AudioUpload and AudioPlayback capabilities disabled");
     }
 
     // BLE 初始化
@@ -2712,6 +2828,8 @@ void setup() {
         NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
     );
     pBatteryLevel->setCallbacks(new BatteryLevelCB());
+    // Battery Level 标准特征不允许 0xFF；0 仅作为尚未读取时的合法占位值。
+    // 小程序在 GET_STATUS 确认 g_batteryValid 前不会展示这个占位值。
     pBatteryLevel->setValue(&g_batteryLevel, 1);
     Serial.println("  [OK] Battery Service");
 

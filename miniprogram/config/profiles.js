@@ -2,8 +2,7 @@ const commonCloudProfile = {
   backendMode: "cloud",
   serviceBackendModes: {
     chat: "cloud",
-    device: "ble",
-    emotion: "cloud"
+    device: "ble"
   },
   // 当前项目三个版本统一使用同一个已部署的微信云开发环境。
   cloudEnvId: "cloudbase-d7g2y0azb4f5dcf00",

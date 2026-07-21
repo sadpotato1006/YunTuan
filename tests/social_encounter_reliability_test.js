@@ -20,6 +20,11 @@ const ackIndex = deviceSource.indexOf("enqueueSocialEncounterAck", processStart)
 assert.ok(saveIndex > processStart && ackIndex > saveIndex, "小程序必须先本地落盘再 ACK");
 assert.match(deviceSource, /config\.COMMANDS\.ACK_SOCIAL_ENCOUNTER/);
 assert.match(deviceSource, /pendingSocialAcks/);
+const processEnd = deviceSource.indexOf("function notifyNewSocialEncounter", processStart);
+const processSource = deviceSource.slice(processStart, processEnd);
+assert.doesNotMatch(processSource, /vibrateShort|showToast/, "身份确认前不应立即提醒相遇");
+assert.match(deviceSource, /resolution\.alreadyKnown\s*!==\s*true/);
+assert.match(deviceSource, /resolveEncounterProfile\([^\n]+!saved\.duplicate\)/);
 
 const first = encounters.saveEncounter({
   encounterId: "0102030405060708",
@@ -51,6 +56,8 @@ assert.strictEqual(failed.status, "failed");
 assert.strictEqual(failed.peerToken, 0x12345678, "查询失败后保留匿名令牌用于重试");
 
 const resolved = encounters.markResolved(first.record.encounterId, {
+  peerKey: "b".repeat(64),
+  alreadyKnown: false,
   interactionRef: "a".repeat(48),
   profile: {
     avatarType: "virtual",
@@ -67,9 +74,49 @@ const resolved = encounters.markResolved(first.record.encounterId, {
 assert.strictEqual(resolved.status, "resolved");
 assert.strictEqual(resolved.peerToken, 0, "解析成功后删除本地匿名令牌");
 assert.strictEqual(resolved.profile.nickname, "小团");
+assert.strictEqual(resolved.peerKey, "b".repeat(64));
+assert.strictEqual(resolved.alreadyKnown, false);
 assert.strictEqual(resolved.interactionRef, "a".repeat(48));
 assert.ok(!JSON.stringify(resolved.profile).includes("must-not-leak"));
 assert.strictEqual(encounters.markGreeting(first.record.encounterId, "sent").greetingStatus, "sent");
+
+const metAgain = encounters.saveEncounter({
+  encounterId: "090A0B0C0D0E0F10",
+  peerToken: 0x22334455,
+  rssi: -52,
+  occurredAt: 1700000200,
+  timestampValid: true
+});
+encounters.markResolved(metAgain.record.encounterId, {
+  peerKey: "b".repeat(64),
+  alreadyKnown: true,
+  interactionRef: "c".repeat(48),
+  profile: resolved.profile
+});
+const grouped = encounters.getDisplayRecords();
+assert.strictEqual(grouped.length, 1, "同一个伙伴的多次相遇应合并显示");
+assert.strictEqual(grouped[0].encounterCount, 2);
+assert.strictEqual(grouped[0].alreadyKnown, true);
+assert.strictEqual(grouped[0].greetingStatus, "matched");
+assert.strictEqual(grouped[0].interactionRef, "", "已认识伙伴不应继续保留招呼入口");
+
+encounters.clearRecords();
+["3132333435363738", "4142434445464748"].forEach((encounterId, index) => {
+  const legacy = encounters.saveEncounter({
+    encounterId,
+    peerToken: 0x33445566 + index,
+    rssi: -58 - index,
+    timestampValid: false
+  });
+  encounters.markResolved(legacy.record.encounterId, {
+    interactionRef: String(index + 1).repeat(48),
+    profile: resolved.profile
+  });
+});
+const groupedLegacy = encounters.getDisplayRecords();
+assert.strictEqual(groupedLegacy.length, 1, "升级前的重复名片也应兼容合并");
+assert.strictEqual(groupedLegacy[0].encounterCount, 2);
+encounters.clearRecords();
 
 const estimated = encounters.saveEncounter({
   encounterId: "1112131415161718",

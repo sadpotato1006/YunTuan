@@ -1,4 +1,6 @@
 const socialService = require("../../services/social");
+const socialAvatar = require("../../services/social-avatar");
+const deviceService = require("../../services/device");
 const tabSwipe = require("../../utils/tab-swipe");
 const ACTIVE_REFRESH_MS = 15000;
 const MAX_REFRESH_MS = 60000;
@@ -6,6 +8,7 @@ const MAX_REFRESH_MS = 60000;
 Page({
   data: {
     loading: true,
+    encounterCount: 0,
     greetings: [],
     matches: [],
     blockedUsers: [],
@@ -23,6 +26,7 @@ Page({
 
   onShow() {
     tabSwipe.enter(this, "/pages/partners/partners");
+    this.loadEncounterSummary();
     this._pageActive = true;
     this._refreshDelay = ACTIVE_REFRESH_MS;
     this.setForegroundView("partners");
@@ -123,6 +127,7 @@ Page({
         paginationData.greetingCursor = String(greetingPage.nextCursor || "");
       }
       this.setData(Object.assign({ greetings, matches, blockedUsers, loading: false }, paginationData));
+      this.resolveInboxAvatars({ greetings, matches, blockedUsers });
       updateBadge(greetings, matches);
       return beforeSignature !== inboxSignature(freshGreetings, freshMatches);
     } catch (error) {
@@ -149,6 +154,67 @@ Page({
 
   toggleBlocked() {
     this.setData({ showBlocked: !this.data.showBlocked });
+  },
+
+  resolveInboxAvatars(groups) {
+    const source = groups && typeof groups === "object" ? groups : {};
+    Object.keys(INBOX_AVATAR_KEYS).forEach(listName => {
+      const idKey = INBOX_AVATAR_KEYS[listName];
+      (Array.isArray(source[listName]) ? source[listName] : []).forEach(item => {
+        const profile = item && item.profile;
+        if (!profile || profile.avatarType !== "custom" || !profile.avatarValue) return;
+        this.resolveInboxAvatar(listName, idKey, String(item[idKey] || ""), profile);
+      });
+    });
+  },
+
+  async resolveInboxAvatar(listName, idKey, itemId, profileValue, force) {
+    const expectedFileId = String(profileValue && profileValue.avatarValue || "");
+    if (!expectedFileId || !itemId) return;
+    try {
+      const profile = await socialAvatar.resolveDisplayProfile(profileValue, { force: force === true });
+      this.updateInboxAvatar(listName, idKey, itemId, expectedFileId, {
+        avatarDisplayUrl: profile.avatarDisplayUrl,
+        avatarFallback: profile.avatarFallback,
+        avatarFailed: false
+      });
+    } catch (error) {
+      console.warn("伙伴列表头像地址解析失败：", error && error.message);
+      this.updateInboxAvatar(listName, idKey, itemId, expectedFileId, { avatarFailed: true });
+    }
+  },
+
+  updateInboxAvatar(listName, idKey, itemId, expectedFileId, values) {
+    const items = Array.isArray(this.data[listName]) ? this.data[listName] : [];
+    const index = items.findIndex(item => String(item && item[idKey] || "") === itemId);
+    const current = index >= 0 ? items[index] : null;
+    if (!current || String(current.profile && current.profile.avatarValue || "") !== expectedFileId) return;
+    const updates = {};
+    if (Object.prototype.hasOwnProperty.call(values, "avatarDisplayUrl")) {
+      updates[`${listName}[${index}].profile.avatarDisplayUrl`] = values.avatarDisplayUrl;
+    }
+    if (Object.prototype.hasOwnProperty.call(values, "avatarFallback")) {
+      updates[`${listName}[${index}].profile.avatarFallback`] = values.avatarFallback;
+    }
+    updates[`${listName}[${index}].avatarFailed`] = values.avatarFailed === true;
+    this.setData(updates);
+  },
+
+  handleInboxAvatarError(event) {
+    const listName = String(event.currentTarget.dataset.list || "");
+    const itemId = String(event.currentTarget.dataset.id || "");
+    const idKey = INBOX_AVATAR_KEYS[listName];
+    const items = Array.isArray(this.data[listName]) ? this.data[listName] : [];
+    const item = idKey ? items.find(value => String(value && value[idKey] || "") === itemId) : null;
+    const profile = item && item.profile;
+    if (!profile) return;
+    if (socialAvatar.isCloudFileId(profile.avatarValue)) {
+      this.resolveInboxAvatar(listName, idKey, itemId, profile, true);
+      return;
+    }
+    this.updateInboxAvatar(listName, idKey, itemId, String(profile.avatarValue || ""), {
+      avatarFailed: true
+    });
   },
 
   toggleSection(event) {
@@ -189,6 +255,22 @@ Page({
     this.openConversationById(event.currentTarget.dataset.id);
   },
 
+  openAiChat() {
+    wx.navigateTo({ url: "/pages/chat/chat" });
+  },
+
+  loadEncounterSummary() {
+    const records = deviceService.getEncounterRecords();
+    const encounterCount = records.reduce((total, item) => {
+      return total + Math.max(1, Number(item.encounterCount) || 1);
+    }, 0);
+    this.setData({ encounterCount });
+  },
+
+  openEncounters() {
+    wx.navigateTo({ url: "/pages/encounters/encounters" });
+  },
+
   openConversationById(value) {
     const conversationId = String(value || "");
     if (!conversationId) {
@@ -218,6 +300,8 @@ Page({
 
 function decorateItems(items, timeField) {
   return (Array.isArray(items) ? items : []).map(item => Object.assign({}, item, {
+    profile: item.profile ? socialAvatar.toDisplayProfile(item.profile) : null,
+    avatarFailed: false,
     timeText: formatTime(item[timeField])
   }));
 }
@@ -226,6 +310,8 @@ function decorateMatches(items) {
   return (Array.isArray(items) ? items : []).map(item => {
     const unreadCount = Math.max(0, Number(item.unreadCount) || 0);
     return Object.assign({}, item, {
+      profile: socialAvatar.toDisplayProfile(item.profile),
+      avatarFailed: false,
       unreadCount,
       hasNotice: item.newMatch || unreadCount > 0 || Boolean(item.contactNotice),
       unreadText: unreadCount > 99 ? "99+" : String(unreadCount),
@@ -286,6 +372,12 @@ function contactNoticeText(value) {
     contact_withdrawn: "TA 撤回了联系方式"
   }[value] || "";
 }
+
+const INBOX_AVATAR_KEYS = Object.freeze({
+  greetings: "greetingId",
+  matches: "conversationId",
+  blockedUsers: "blockId"
+});
 
 function formatTime(timestamp) {
   const date = new Date(Number(timestamp) || Date.now());

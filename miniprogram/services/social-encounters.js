@@ -46,6 +46,8 @@ function saveEncounter(event) {
     receivedAt,
     status: "pending",
     profile: null,
+    peerKey: "",
+    alreadyKnown: false,
     interactionRef: "",
     greetingStatus: "none",
     errorMessage: "",
@@ -66,7 +68,12 @@ function markResolved(encounterId, resolutionValue) {
     if (profile) {
       record.profile = profileService.toPublicCard(profile);
       record.peerToken = 0;
-      record.interactionRef = normalizeInteractionRef(resolution.interactionRef);
+      record.peerKey = normalizePeerKey(resolution.peerKey);
+      record.alreadyKnown = resolution.alreadyKnown === true;
+      record.interactionRef = record.alreadyKnown
+        ? ""
+        : normalizeInteractionRef(resolution.interactionRef);
+      if (record.alreadyKnown) record.greetingStatus = "matched";
       record.status = "resolved";
       record.errorMessage = "";
     } else {
@@ -83,6 +90,10 @@ function markGreeting(encounterId, statusValue) {
       throw new Error("招呼状态不正确");
     }
     record.greetingStatus = status;
+    if (status === "matched") {
+      record.alreadyKnown = true;
+      record.interactionRef = "";
+    }
   });
 }
 
@@ -116,7 +127,25 @@ function getLatestRecord() {
 }
 
 function getDisplayRecords() {
-  return readStore().records.map(toDisplayRecord);
+  const grouped = [];
+  const groupedByIdentity = Object.create(null);
+  readStore().records.forEach(record => {
+    const display = toDisplayRecord(record);
+    if (!display) return;
+    const identity = displayIdentity(record);
+    const previous = groupedByIdentity[identity];
+    if (!previous) {
+      display.encounterCount = 1;
+      groupedByIdentity[identity] = display;
+      grouped.push(display);
+      return;
+    }
+    previous.encounterCount += 1;
+    previous.alreadyKnown = previous.alreadyKnown || display.alreadyKnown;
+    previous.greetingStatus = mergeGreetingStatus(previous.greetingStatus, display.greetingStatus);
+    if (previous.alreadyKnown) previous.interactionRef = "";
+  });
+  return grouped;
 }
 
 function clearRecords() {
@@ -134,6 +163,7 @@ function toDisplayRecord(value) {
     receivedAt: record.receivedAt,
     status: record.status,
     profile: record.profile ? clone(record.profile) : null,
+    alreadyKnown: record.alreadyKnown,
     interactionRef: record.interactionRef,
     greetingStatus: record.greetingStatus,
     errorMessage: record.errorMessage,
@@ -160,6 +190,10 @@ function normalizeStoredRecord(value) {
     Date.now() - receivedAt > PEER_TOKEN_RETENTION_MS;
   const interactionExpired = receivedAt > 0 &&
     Date.now() - receivedAt > PEER_TOKEN_RETENTION_MS;
+  const greetingStatus = ["sent", "matched", "declined"].includes(value.greetingStatus)
+    ? value.greetingStatus
+    : "none";
+  const alreadyKnown = value.alreadyKnown === true || greetingStatus === "matched";
   if (tokenExpired) status = "unavailable";
   return {
     encounterId,
@@ -170,10 +204,10 @@ function normalizeStoredRecord(value) {
     receivedAt,
     status,
     profile,
-    interactionRef: interactionExpired ? "" : normalizeInteractionRef(value.interactionRef),
-    greetingStatus: ["sent", "matched", "declined"].includes(value.greetingStatus)
-      ? value.greetingStatus
-      : "none",
+    peerKey: normalizePeerKey(value.peerKey),
+    alreadyKnown,
+    interactionRef: alreadyKnown || interactionExpired ? "" : normalizeInteractionRef(value.interactionRef),
+    greetingStatus,
     errorMessage: String(tokenExpired ? "相遇名片查询期限已过" : (value.errorMessage || "")).slice(0, 100),
     updatedAt: normalizeTimestamp(value.updatedAt)
   };
@@ -204,6 +238,30 @@ function normalizeTimestamp(value) {
 function normalizeInteractionRef(value) {
   const reference = String(value || "").trim().toLowerCase();
   return /^[a-f0-9]{48}$/.test(reference) ? reference : "";
+}
+
+function normalizePeerKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return /^[a-f0-9]{64}$/.test(key) ? key : "";
+}
+
+function displayIdentity(record) {
+  if (record.peerKey) return `peer:${record.peerKey}`;
+  if (!record.profile) return `encounter:${record.encounterId}`;
+  const profile = record.profile;
+  return `legacy-profile:${JSON.stringify([
+    profile.avatarType,
+    profile.avatarValue,
+    profile.nickname,
+    profile.bio,
+    profile.tags,
+    profile.intention
+  ])}`;
+}
+
+function mergeGreetingStatus(first, second) {
+  const priority = { none: 0, declined: 1, sent: 2, matched: 3 };
+  return (priority[second] || 0) > (priority[first] || 0) ? second : first;
 }
 
 function clone(value) {

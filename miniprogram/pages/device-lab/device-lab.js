@@ -27,6 +27,7 @@ Page({
           protocolMajor: state.protocolMajor,
           protocolMinor: state.protocolMinor,
           battery: state.battery,
+          batteryStatus: state.batteryStatus,
           name: state.name,
           modelNumber: state.modelNumber,
           firmwareRevision: state.firmwareRevision,
@@ -84,10 +85,12 @@ Page({
       await deviceService.simulateSocialEncounter(partner.token, -55);
       wx.showModal({
         title: "测试伙伴已出现",
-        content: "返回设备页即可在“最近相遇”卡片直接打招呼。测试伙伴会自动接受。",
-        confirmText: "返回设备页",
+        content: "返回伙伴页，从“最近相遇”入口即可查看名片并打招呼。测试伙伴会自动接受。",
+        confirmText: "去伙伴页",
         cancelText: "继续调试",
-        success: result => { if (result.confirm) wx.navigateBack(); }
+        success: result => {
+          if (result.confirm) wx.switchTab({ url: "/pages/partners/partners" });
+        }
       });
     } catch (error) {
       this.showError(error);
@@ -215,7 +218,7 @@ Page({
   clearDiagnosticReport() {
     wx.showModal({
       title: "清空诊断记录",
-      content: "只会清除本机诊断事件，不影响聊天、情绪或社交数据。",
+      content: "只会清除本机诊断事件，不影响聊天或社交数据。",
       confirmText: "清空",
       confirmColor: "#C06052",
       success: result => {

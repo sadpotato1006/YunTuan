@@ -13,7 +13,7 @@ const SIMULATOR_CAPABILITIES = config.capabilities.battery |
 const startedAt = Date.now();
 let battery = 78;
 let socialMode = true;
-let alertSettings = { socialReminder: true, vibration: true, sound: true };
+let alertSettings = { socialReminder: true, vibration: true, sound: false };
 let memorySocialToken = 0;
 let encounterSequence = 0;
 
@@ -127,7 +127,8 @@ function createWriteResponse(value) {
     else data = new Uint8Array([0]);
   } else if (request.command === config.COMMANDS.SET_ALERT_SETTINGS) {
     try {
-      alertSettings = protocol.parseAlertSettingsData(request.payload);
+      const requested = protocol.parseAlertSettingsData(request.payload);
+      alertSettings = { socialReminder: true, vibration: requested.vibration, sound: false };
       data = protocol.buildAlertSettingsPayload(alertSettings);
     } catch (error) {
       statusCode = config.STATUS_CODES.INVALID_PAYLOAD;

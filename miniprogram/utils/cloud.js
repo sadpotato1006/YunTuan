@@ -90,7 +90,6 @@ function getFriendlyCloudError(error, serviceName) {
   const serviceLabels = {
     chat: "聊天服务",
     social: "社交服务",
-    emotion: "情绪记录服务"
   };
   const serviceLabel = serviceLabels[serviceName] || "云端服务";
 
@@ -113,7 +112,7 @@ function getFriendlyCloudError(error, serviceName) {
   return `${serviceLabel}暂时不可用，请稍后再试`;
 }
 
-// 保留默认函数导出，避免影响 device、emotion 等现有 service；也支持具名导入。
+// 保留默认函数导出，避免影响 device、social 等现有 service；也支持具名导入。
 module.exports = callCloudFunction;
 module.exports.callCloudFunction = callCloudFunction;
 module.exports.getFriendlyCloudError = getFriendlyCloudError;

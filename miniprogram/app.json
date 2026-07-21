@@ -1,17 +1,14 @@
 {
   "pages": [
-    "pages/home/home",
+    "pages/device/device",
+    "pages/partners/partners",
     "pages/chat/chat",
     "pages/ble-debug/ble-debug",
-    "pages/device/device",
     "pages/device-lab/device-lab",
-    "pages/emotion/emotion",
     "pages/encounters/encounters",
-    "pages/partners/partners",
     "pages/social-chat/social-chat",
     "pages/social-contact/social-contact",
-    "pages/social-profile/social-profile",
-    "pages/settings/settings"
+    "pages/social-profile/social-profile"
   ],
   "window": {
     "navigationBarTitleText": "云团",
@@ -31,11 +28,8 @@
     "backgroundColor": "#FFFFFF",
     "borderStyle": "white",
     "list": [
-      { "pagePath": "pages/home/home", "text": "首页" },
       { "pagePath": "pages/device/device", "text": "设备" },
-      { "pagePath": "pages/partners/partners", "text": "伙伴" },
-      { "pagePath": "pages/emotion/emotion", "text": "心情" },
-      { "pagePath": "pages/settings/settings", "text": "我的" }
+      { "pagePath": "pages/partners/partners", "text": "伙伴" }
     ]
   },
   "style": "v2",

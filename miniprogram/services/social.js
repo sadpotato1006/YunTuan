@@ -192,6 +192,8 @@ async function resolveToken(token) {
   });
   return {
     profile: response.data.profile || null,
+    peerKey: String(response.data.peerKey || ""),
+    alreadyKnown: response.data.alreadyKnown === true,
     interactionRef: String(response.data.interactionRef || "")
   };
 }

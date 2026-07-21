@@ -147,7 +147,6 @@ function streamMessage(message, history, handlers, requestId) {
             message: "success",
             data: {
               reply,
-              emotion: payload.emotion || "unknown",
               streamed: true
             }
           });

@@ -12,11 +12,6 @@ const VIRTUAL_AVATARS = [
 ];
 
 const AVAILABLE_TAGS = ["摄影", "羽毛球", "音乐", "跑步", "电影", "阅读", "旅行", "美食", "游戏", "宠物"];
-const INTENTIONS = [
-  { value: "chat", label: "可以聊天", description: "愿意认识附近的新朋友" },
-  { value: "buddy", label: "找搭子", description: "寻找兴趣相同的活动伙伴" },
-  { value: "quiet", label: "暂不打扰", description: "展示名片，但暂时不接收招呼" }
-];
 
 function buildTagOptions(tags) {
   const selected = Array.isArray(tags) ? tags : [];
@@ -30,8 +25,6 @@ Page({
     profile: INITIAL_PROFILE,
     virtualAvatars: VIRTUAL_AVATARS,
     tagOptions: buildTagOptions(INITIAL_PROFILE.tags),
-    intentions: INTENTIONS,
-    intentionLabel: profileService.INTENTION_LABELS[INITIAL_PROFILE.intention],
     customTag: "",
     saved: false,
     saving: false
@@ -43,7 +36,6 @@ Page({
     this.setData({
       profile,
       tagOptions: buildTagOptions(profile.tags),
-      intentionLabel: profileService.INTENTION_LABELS[profile.intention],
       saved: false
     });
     this.restoreCloudProfileIfNeeded(profile);
@@ -70,8 +62,7 @@ Page({
         this._savedProfile = profile;
         this.setData({
           profile,
-          tagOptions: buildTagOptions(profile.tags),
-          intentionLabel: profileService.INTENTION_LABELS[profile.intention]
+          tagOptions: buildTagOptions(profile.tags)
         });
         const synced = await socialService.saveProfile(profile);
         profile = profileService.saveProfile(synced.localProfile);
@@ -84,8 +75,7 @@ Page({
       this._savedProfile = profile;
       this.setData({
         profile,
-        tagOptions: buildTagOptions(profile.tags),
-        intentionLabel: profileService.INTENTION_LABELS[profile.intention]
+        tagOptions: buildTagOptions(profile.tags)
       });
     } catch (error) {
       console.warn("云端社交名片恢复失败：", error && error.message);
@@ -206,16 +196,6 @@ Page({
     });
   },
 
-  selectIntention(event) {
-    const intention = event.currentTarget.dataset.value;
-    if (!profileService.INTENTION_LABELS[intention]) return;
-    this.setData({
-      "profile.intention": intention,
-      intentionLabel: profileService.INTENTION_LABELS[intention],
-      saved: false
-    });
-  },
-
   addContactOption(event) {
     const options = this.data.profile.contactOptions.slice();
     if (options.length >= 8) {
@@ -299,7 +279,6 @@ Page({
     this._savedProfile = profile;
     this.setData({
       profile,
-      intentionLabel: profileService.INTENTION_LABELS[profile.intention],
       saved: false,
       saving: true
     });

@@ -53,6 +53,7 @@ const STATUS_CODES = {
 
 module.exports = {
   deviceNamePrefix: "YT-",
+  defaultDeviceName: "YT-000001",
   scanTimeout: 10000,
   connectTimeout: 8000,
   commandTimeout: 2000,

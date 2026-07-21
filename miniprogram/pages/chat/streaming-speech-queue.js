@@ -23,7 +23,10 @@ function createStreamingSpeechQueue(page, chatService, deviceTtsService, voiceTr
       const currentSegment = segmentNumber;
       const synthesisStartedAt = Date.now();
       // TTS 云调用保持单并发，仍可与上一段 BLE 播放并行，避免同一用户用量事务互相冲突。
-      const prepared = synthesisChain.then(() => chatService.synthesizeSpeech(speechText)).then(
+      const prepared = synthesisChain.then(() => {
+        if (page._pageActive === false) return { skipped: true };
+        return chatService.synthesizeSpeech(speechText);
+      }).then(
         result => ({ result }),
         error => ({ error })
       );
@@ -31,11 +34,13 @@ function createStreamingSpeechQueue(page, chatService, deviceTtsService, voiceTr
 
       playbackChain = playbackChain.then(async () => {
         const synthesized = await prepared;
+        if (synthesized.result && synthesized.result.skipped) return;
         if (synthesized.error) {
           if (!firstError) firstError = synthesized.error;
           console.warn(`第 ${currentSegment} 段语音合成失败，继续处理后续语音：`, synthesized.error.message);
           return;
         }
+        if (page._pageActive === false) return;
         if (!firstSpeechReady && voiceTrace) {
           firstSpeechReady = true;
           voiceTrace.firstSpeechReadyAt = Date.now();

@@ -1,7 +1,7 @@
 const chatService = require("./chat");
 
 const PCM_FRAME_BYTES = 6400; // 200 ms, 16 kHz, mono, PCM16
-const SEND_INTERVAL_MS = 190;
+const SEND_INTERVAL_MS = 200;
 const CONNECT_TIMEOUT_MS = 6000;
 const FINAL_TIMEOUT_MS = 10000;
 const START_TIMEOUT_MS = 8000;

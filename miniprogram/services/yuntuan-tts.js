@@ -208,15 +208,32 @@ async function play(payload) {
     if (complete.type === STATUS_ERROR) throw new Error(getDeviceErrorMessage(complete.errorCode));
     return getState();
   } catch (error) {
-    if (bleService.getState().connected) {
+    if (!error.cancelled && bleService.getState().connected) {
       sendControl(createSessionControl(CONTROL_ABORT, id)).catch(() => {});
     }
-    setState({ phase: "error", progress: 0, statusText: "挂件朗读失败", errorMessage: error.message });
+    if (error.cancelled) {
+      setState({ phase: "idle", progress: 0, statusText: "挂件朗读已暂停", errorMessage: "" });
+    } else {
+      setState({ phase: "error", progress: 0, statusText: "挂件朗读失败", errorMessage: error.message });
+    }
     throw error;
   } finally {
     activeSession = null;
     rejectStatusWaiters(new Error("朗读会话已经结束"));
   }
+}
+
+async function cancel(reason) {
+  const current = activeSession;
+  if (!current) return false;
+  const error = new Error(reason || "挂件朗读已暂停");
+  error.cancelled = true;
+  current.error = error;
+  rejectStatusWaiters(error);
+  if (bleService.getState().connected) {
+    await sendControl(createSessionControl(CONTROL_ABORT, current.id)).catch(() => {});
+  }
+  return true;
 }
 
 function validatePayload(payload) {
@@ -415,4 +432,4 @@ function writeUint32(bytes, offset, value) {
   bytes[offset + 3] = (value >>> 24) & 0xFF;
 }
 
-module.exports = { attach, play, getState, subscribe };
+module.exports = { attach, play, cancel, getState, subscribe };

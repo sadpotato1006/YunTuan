@@ -1,6 +1,27 @@
 <view class="page partners-page tab-swipe-page" style="{{tabSwipeStyle}}" bindtouchstart="onTabSwipeStart" bindtouchmove="onTabSwipeMove" bindtouchend="onTabSwipeEnd" bindtouchcancel="onTabSwipeCancel">
   <view class="page-heading">
-    <text class="page-tip">朋友消息和收到的招呼都集中在这里</text>
+    <view class="title">伙伴</view>
+  </view>
+
+  <view class="ai-companion-card card" bindtap="openAiChat">
+    <view class="ai-companion-avatar">云</view>
+    <view class="conversation-main">
+      <view class="conversation-title-row">
+        <text class="conversation-name">云团陪伴</text>
+      </view>
+    </view>
+    <text class="ai-entry-arrow">›</text>
+  </view>
+
+  <view class="encounter-entry card" bindtap="openEncounters">
+    <view class="encounter-entry-icon">遇</view>
+    <view class="conversation-main">
+      <view class="encounter-entry-title-row">
+        <text class="encounter-entry-title">最近相遇</text>
+        <text wx:if="{{encounterCount}}" class="encounter-entry-count">{{encounterCount}} 次</text>
+      </view>
+    </view>
+    <text class="ai-entry-arrow">›</text>
   </view>
 
   <view wx:if="{{loading}}" class="loading">正在获取伙伴消息…</view>
@@ -16,8 +37,8 @@
 
       <block wx:if="{{friendsExpanded}}">
         <view wx:for="{{matches}}" wx:key="conversationId" class="conversation-row" data-id="{{item.conversationId}}" bindtap="openConversation">
-          <image wx:if="{{item.profile.avatarType === 'custom'}}" class="conversation-avatar" src="{{item.profile.avatarValue}}" mode="aspectFill" />
-          <view wx:else class="conversation-avatar virtual-avatar" style="background: {{item.profile.avatarColor}}">{{item.profile.avatarValue}}</view>
+          <image wx:if="{{item.profile.avatarType === 'custom' && item.profile.avatarDisplayUrl && !item.avatarFailed}}" class="conversation-avatar" src="{{item.profile.avatarDisplayUrl}}" mode="aspectFill" data-list="matches" data-id="{{item.conversationId}}" binderror="handleInboxAvatarError" />
+          <view wx:else class="conversation-avatar virtual-avatar" style="background: {{item.profile.avatarColor}}">{{item.profile.avatarType === 'custom' ? item.profile.avatarFallback : item.profile.avatarValue}}</view>
           <view class="conversation-main">
             <view class="conversation-title-row">
               <text class="conversation-name">{{item.profile.nickname}}</text>
@@ -42,8 +63,8 @@
 
       <block wx:if="{{greetingsExpanded}}">
         <view wx:for="{{greetings}}" wx:key="greetingId" class="conversation-row greeting-row">
-          <image wx:if="{{item.profile.avatarType === 'custom'}}" class="conversation-avatar" src="{{item.profile.avatarValue}}" mode="aspectFill" />
-          <view wx:else class="conversation-avatar virtual-avatar" style="background: {{item.profile.avatarColor}}">{{item.profile.avatarValue}}</view>
+          <image wx:if="{{item.profile.avatarType === 'custom' && item.profile.avatarDisplayUrl && !item.avatarFailed}}" class="conversation-avatar" src="{{item.profile.avatarDisplayUrl}}" mode="aspectFill" data-list="greetings" data-id="{{item.greetingId}}" binderror="handleInboxAvatarError" />
+          <view wx:else class="conversation-avatar virtual-avatar" style="background: {{item.profile.avatarColor}}">{{item.profile.avatarType === 'custom' ? item.profile.avatarFallback : item.profile.avatarValue}}</view>
           <view class="conversation-main">
             <view class="conversation-title-row">
               <text class="conversation-name">{{item.profile.nickname}}</text>

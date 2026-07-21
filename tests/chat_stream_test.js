@@ -101,7 +101,7 @@ async function testChatServiceStreaming() {
   const chunks = [
     "event: start\ndata: {}\n\n",
     "event: segment\ndata: {\"index\":0,\"content\":\"第一句。\"}\n\n",
-    "event: done\ndata: {\"reply\":\"第一句。\",\"emotion\":\"unknown\"}\n\n"
+    "event: done\ndata: {\"reply\":\"第一句。\"}\n\n"
   ];
   global.wx = {
     cloud: {

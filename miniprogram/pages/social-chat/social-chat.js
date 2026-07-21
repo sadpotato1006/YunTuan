@@ -1,5 +1,6 @@
 const socialService = require("../../services/social");
 const socialChatCache = require("../../services/social-chat-cache");
+const socialAvatar = require("../../services/social-avatar");
 const {
   EMPTY_CONTACT_EXCHANGE,
   EMPTY_MESSAGE_POLICY,
@@ -15,14 +16,14 @@ const {
 const ACTIVE_REFRESH_MS = 5000;
 const MAX_REFRESH_MS = 30000;
 
-const DEFAULT_PROFILE = {
+const DEFAULT_PROFILE = socialAvatar.toDisplayProfile({
   avatarType: "virtual",
   avatarValue: "友",
   avatarColor: "#DFECE5",
   nickname: "伙伴",
   bio: "",
   tags: []
-};
+});
 
 const REPORT_OPTIONS = [
   { label: "垃圾广告", value: "spam" },
@@ -52,7 +53,8 @@ Page({
     contactExchange: EMPTY_CONTACT_EXCHANGE,
     contactSummary: "双方已同意，按需选择分享",
     contactSaving: false,
-    soloTestOperating: false
+    soloTestOperating: false,
+    partnerAvatarFailed: false
   },
 
   onLoad(options) {
@@ -125,7 +127,7 @@ Page({
   restoreCachedConversation() {
     const cached = socialChatCache.readConversation(this.data.conversationId);
     if (!cached) return false;
-    const profile = cached.profile || DEFAULT_PROFILE;
+    const profile = socialAvatar.toDisplayProfile(cached.profile || DEFAULT_PROFILE);
     const messages = decorateMessages(cached.messages);
     const contactExchange = normalizeContactExchange(cached.contactExchange);
     const messagePolicy = normalizeMessagePolicy(cached.messagePolicy);
@@ -133,6 +135,7 @@ Page({
       loading: false,
       relationshipEnded: false,
       profile,
+      partnerAvatarFailed: false,
       messages,
       hasMoreMessages: cached.hasMoreMessages === true,
       messageCursor: Number(cached.messageCursor) || 0,
@@ -143,13 +146,13 @@ Page({
     });
     this._conversationLoaded = true;
     this._lastConversationSyncAt = Number(cached.syncedAt) || 0;
-    wx.setNavigationBarTitle({ title: profile.nickname || "伙伴聊天" });
+    this.resolvePartnerAvatar(profile);
     return true;
   },
 
   persistConversationCache(overrides) {
     const state = Object.assign({
-      profile: this.data.profile,
+      profile: socialAvatar.toCacheProfile(this.data.profile),
       messages: this.data.messages,
       hasMoreMessages: this.data.hasMoreMessages,
       messageCursor: this.data.messageCursor,
@@ -177,9 +180,10 @@ Page({
         pageSize: 30,
         afterCreatedAt
       });
-      const profile = result.conversation && result.conversation.profile
+      const rawProfile = result.conversation && result.conversation.profile
         ? result.conversation.profile
         : DEFAULT_PROFILE;
+      const profile = socialAvatar.toDisplayProfile(rawProfile);
       const pageMessages = decorateMessages(result.messages);
       const firstLoad = !this._conversationLoaded;
       const messages = firstLoad
@@ -193,6 +197,7 @@ Page({
         loading: false,
         relationshipEnded: false,
         profile,
+        partnerAvatarFailed: false,
         messages,
         hasMoreMessages: firstLoad ? pagination.hasMore === true : this.data.hasMoreMessages,
         messageCursor: firstLoad ? (Number(pagination.nextCursor) || 0) : this.data.messageCursor,
@@ -212,8 +217,8 @@ Page({
       this._conversationLoaded = true;
       this._lastConversationSyncAt = Date.now();
       this.persistConversationCache(nextData);
+      this.resolvePartnerAvatar(profile);
       const changed = beforeSignature !== conversationSignature(messages, contactExchange, messagePolicy);
-      wx.setNavigationBarTitle({ title: profile.nickname || "伙伴聊天" });
       if (!silent) {
         const app = typeof getApp === "function" ? getApp() : null;
         if (app && typeof app.refreshSocialBadge === "function") app.refreshSocialBadge(true);
@@ -228,6 +233,35 @@ Page({
       this._loadingConversation = false;
       wx.stopPullDownRefresh();
     }
+  },
+
+  async resolvePartnerAvatar(profileValue, force) {
+    const expectedFileId = String(profileValue && profileValue.avatarValue || "");
+    if (!expectedFileId || profileValue.avatarType !== "custom") return;
+    try {
+      const resolved = await socialAvatar.resolveDisplayProfile(profileValue, { force: force === true });
+      if (String(this.data.profile && this.data.profile.avatarValue || "") !== expectedFileId) return;
+      this.setData({
+        "profile.avatarDisplayUrl": resolved.avatarDisplayUrl,
+        "profile.avatarFallback": resolved.avatarFallback,
+        partnerAvatarFailed: false
+      });
+    } catch (error) {
+      console.warn("伙伴头像地址解析失败：", error && error.message);
+      if (force && String(this.data.profile && this.data.profile.avatarValue || "") === expectedFileId) {
+        this.setData({ partnerAvatarFailed: true });
+      }
+    }
+  },
+
+  handlePartnerAvatarError() {
+    const profile = this.data.profile || {};
+    const fileId = String(profile.avatarValue || "");
+    if (socialAvatar.isCloudFileId(fileId)) {
+      this.resolvePartnerAvatar(profile, true);
+      return;
+    }
+    this.setData({ partnerAvatarFailed: true });
   },
 
   async loadEarlierMessages() {

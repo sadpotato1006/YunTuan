@@ -7,6 +7,7 @@ const settingsService = require("./settings");
 const config = require("../config/ble");
 const protocol = require("../utils/yuntuan-protocol");
 const bufferUtils = require("../utils/buffer");
+const { normalizeDeviceName } = require("../utils/ble-device-name");
 const { toDevice: buildDeviceView, homeOverview, result } = require("./yuntuan-device-view");
 const { createGattHelpers } = require("./yuntuan-device-gatt");
 const {
@@ -17,6 +18,7 @@ const {
 } = createGattHelpers(config);
 
 const RECONNECT_DELAYS = [1000, 3000, 5000, 10000, 15000, 30000];
+const BATTERY_READING_TIMEOUT_MS = 6000;
 const LAST_DEVICE_STORAGE_KEY = "yuntuan_last_ble_device";
 const SOCIAL_REGISTRATION_REFRESH_MS = 6 * 60 * 60 * 1000;
 const SOCIAL_REGISTRATION_LEEWAY_MS = 60 * 60 * 1000;
@@ -25,19 +27,21 @@ const initialState = {
   available: false,
   discovering: false,
   connecting: false,
+  reconnecting: false,
   connected: false,
   ready: false,
   simulated: false,
   canReconnect: false,
   rememberedDeviceName: "",
   deviceId: "",
-  name: "云团智能挂件",
+  name: config.defaultDeviceName,
   devices: [],
   battery: null,
+  batteryStatus: "reading",
   socialMode: false,
   socialReminder: true,
   vibration: true,
-  sound: true,
+  sound: false,
   uptime: 0,
   protocolMajor: null,
   protocolMinor: null,
@@ -75,6 +79,8 @@ let rememberedDeviceLoaded = false;
 let startupReconnectAttempted = false;
 let reconnectIndex = 0;
 let reconnectTimer = null;
+let reconnectGeneration = 0;
+let connectionOperationGeneration = 0;
 let wasConnected = false;
 let activeEncounterResolutions = Object.create(null);
 let pendingSocialAcks = [];
@@ -84,6 +90,7 @@ let registeredSocialToken = 0;
 let socialRegistrationExpiresAt = 0;
 let socialRegistrationPromise = null;
 let socialRegistrationTimer = null;
+let batteryUnavailableTimer = null;
 
 restoreCachedEncounterState();
 
@@ -102,6 +109,30 @@ function setState(patch) {
   subscribers.slice().forEach(listener => listener(snapshot));
 }
 
+function clearBatteryUnavailableTimer() {
+  if (batteryUnavailableTimer) clearTimeout(batteryUnavailableTimer);
+  batteryUnavailableTimer = null;
+}
+
+function applyBatteryReading(battery, pendingWhenMissing) {
+  clearBatteryUnavailableTimer();
+  if (Number.isInteger(battery) && battery >= 0 && battery <= 100) {
+    setState({ battery, batteryStatus: "available" });
+    return;
+  }
+  const batteryStatus = pendingWhenMissing && state.batteryStatus !== "unavailable"
+    ? "reading"
+    : "unavailable";
+  setState({ battery: null, batteryStatus });
+  if (batteryStatus !== "reading") return;
+  batteryUnavailableTimer = setTimeout(() => {
+    batteryUnavailableTimer = null;
+    if (state.connected && state.battery === null && state.batteryStatus === "reading") {
+      setState({ batteryStatus: "unavailable" });
+    }
+  }, BATTERY_READING_TIMEOUT_MS);
+}
+
 function subscribe(listener) {
   if (typeof listener !== "function") throw new Error("设备状态监听器必须是函数");
   subscribers.push(listener);
@@ -113,6 +144,7 @@ function subscribe(listener) {
 
 function handleTransportState(transport) {
   const connected = Boolean(transport.connected);
+  const deviceId = transport.deviceId || state.deviceId;
   setState({
     initialized: Boolean(transport.adapterReady),
     available: Boolean(transport.available),
@@ -120,8 +152,8 @@ function handleTransportState(transport) {
     connecting: Boolean(transport.connecting),
     connected,
     simulated: Boolean(transport.simulated),
-    deviceId: transport.deviceId || state.deviceId,
-    name: transport.deviceName || state.name,
+    deviceId,
+    name: normalizeDeviceName(transport.deviceName, deviceId, state.name || config.defaultDeviceName),
     devices: (transport.devices || []).filter(device =>
       String(device.name || device.localName || "").startsWith(config.deviceNamePrefix)
     ),
@@ -137,14 +169,17 @@ function handleUnexpectedDisconnect() {
   rejectPending(new Error("设备连接已断开"));
   rejectValueWaiters(new Error("设备连接已断开"));
   setState({ ready: false, statusText: "设备连接已断开" });
-  if (!intentionalDisconnect && lastDeviceId && !state.simulated) scheduleReconnect();
+  if (!intentionalDisconnect && lastDeviceId && !state.simulated) {
+    reconnectIndex = 0;
+    scheduleReconnect(reconnectGeneration += 1);
+  }
 }
 
 function handleValue(result) {
   resolveValueWaiters(result);
   if (sameUuid(result.characteristicId, config.UUIDS.batteryLevel)) {
     const bytes = protocol.toBytes(result.value);
-    if (bytes.length === 1 && bytes[0] <= 100) setState({ battery: bytes[0] });
+    if (bytes.length === 1 && bytes[0] <= 100) applyBatteryReading(bytes[0], false);
     return;
   }
   if (!sameUuid(result.characteristicId, config.UUIDS.eventTx)) return;
@@ -179,10 +214,10 @@ function handleValue(result) {
 function applyEvent(event) {
   if (event.type === "statusChanged") {
     setState({
-      battery: event.battery,
       socialMode: event.socialMode,
       lastEventText: "设备状态已更新"
     });
+    applyBatteryReading(event.battery, false);
     return;
   }
   if (event.type === "button") {
@@ -191,7 +226,8 @@ function applyEvent(event) {
     return;
   }
   if (event.type === "lowBattery") {
-    setState({ battery: event.battery, lastEventText: `设备低电量：${event.battery}%` });
+    applyBatteryReading(event.battery, false);
+    setState({ lastEventText: `设备低电量：${event.battery}%` });
     return;
   }
   if (event.type === "bindWindowChanged") {
@@ -216,11 +252,14 @@ function processSocialEncounter(event) {
   enqueueSocialEncounterAck(saved.record.encounterId);
   const displayRecord = encounterStore.toDisplayRecord(saved.record);
   if (!saved.record.profile && saved.record.peerToken) {
-    resolveEncounterProfile(saved.record.encounterId, saved.record.peerToken);
+    resolveEncounterProfile(saved.record.encounterId, saved.record.peerToken, !saved.duplicate);
   }
   applyEncounterRecord(displayRecord, !saved.duplicate);
+}
+
+function notifyNewSocialEncounter() {
   const reminderSettings = settingsService.getSettings();
-  if (!saved.duplicate && reminderSettings.socialReminder && typeof wx !== "undefined") {
+  if (reminderSettings.socialReminder && typeof wx !== "undefined") {
     if (reminderSettings.vibration && typeof wx.vibrateShort === "function") {
       wx.vibrateShort({ type: "light", fail() {} });
     }
@@ -249,7 +288,7 @@ function retryEncounterProfile(encounterId) {
   return resolveEncounterProfile(record.encounterId, record.peerToken);
 }
 
-function resolveEncounterProfile(encounterId, peerToken) {
+function resolveEncounterProfile(encounterId, peerToken, notifyOnResolved) {
   if (activeEncounterResolutions[encounterId]) {
     return activeEncounterResolutions[encounterId];
   }
@@ -258,6 +297,9 @@ function resolveEncounterProfile(encounterId, peerToken) {
       const updated = encounterStore.markResolved(encounterId, resolution);
       if (updated && state.lastEncounterId === encounterId) {
         applyEncounterRecord(encounterStore.toDisplayRecord(updated), false);
+      }
+      if (notifyOnResolved && resolution.profile && resolution.alreadyKnown !== true) {
+        notifyNewSocialEncounter();
       }
       return resolution.profile;
     })
@@ -432,19 +474,42 @@ function getDisplayDevices() {
   return bleService.getDisplayDevices(true);
 }
 
-async function connectDevice(deviceId) {
+async function connectDevice(deviceId, options) {
   if (!deviceId) throw new Error("请选择要连接的云团挂件");
+  const connectOptions = options || {};
+  if (connectOptions.reconnectGeneration === undefined) {
+    reconnectGeneration += 1;
+  } else {
+    assertReconnectGeneration(connectOptions.reconnectGeneration);
+  }
   cancelReconnect();
+  const operationGeneration = connectionOperationGeneration += 1;
   intentionalDisconnect = false;
-  setState({ connecting: true, ready: false, errorMessage: "", statusText: "正在连接挂件…" });
+  clearBatteryUnavailableTimer();
+  setState({
+    connecting: true,
+    reconnecting: connectOptions.reconnectGeneration !== undefined,
+    ready: false,
+    battery: null,
+    batteryStatus: "reading",
+    errorMessage: "",
+    statusText: "正在连接挂件…"
+  });
   try {
-    await bleService.connectDevice(deviceId);
+    const rememberedName = deviceId === lastDeviceId ? lastDeviceName : "";
+    await bleService.connectDevice(deviceId, rememberedName);
+    assertConnectionOperation(operationGeneration);
     await initializeConnectedDevice();
+    assertConnectionOperation(operationGeneration);
     const transport = bleService.getState();
     if (!transport.simulated) rememberDevice(deviceId, transport.deviceName || state.name);
     reconnectIndex = 0;
+    setState({ reconnecting: false });
     return result({ device: toDevice() });
   } catch (error) {
+    if ((error && error.cancelled) || operationGeneration !== connectionOperationGeneration) {
+      throw createReconnectCancelledError();
+    }
     intentionalDisconnect = true;
     try { await bleService.disconnectDevice(); } catch (ignore) {}
     setState({ connecting: false, ready: false, errorMessage: error.message, statusText: "设备初始化失败" });
@@ -453,6 +518,8 @@ async function connectDevice(deviceId) {
 }
 
 async function loadSimulator() {
+  reconnectGeneration += 1;
+  connectionOperationGeneration += 1;
   cancelReconnect();
   intentionalDisconnect = false;
   await bleService.loadSimulator();
@@ -615,7 +682,8 @@ async function readStandardDeviceInformation(services) {
   const batteryValue = await readCharacteristicValue(config.UUIDS.batteryService, config.UUIDS.batteryLevel);
   const batteryBytes = protocol.toBytes(batteryValue.value);
   if (batteryBytes.length !== 1 || batteryBytes[0] > 100) throw new Error("标准电量特征值格式不正确");
-  patch.battery = batteryBytes[0];
+  // 标准 Battery Level 不支持“未知”值，固件启动时只能放一个合法占位值。
+  // 实际展示以随后 GET_STATUS 的 battery/0xFF 为准，避免把占位 0 当成真实电量。
   setState(patch);
 }
 
@@ -623,10 +691,10 @@ async function getStatus() {
   const response = await request(config.COMMANDS.GET_STATUS);
   const status = protocol.parseStatusData(response.data);
   setState({
-    battery: status.battery,
     socialMode: status.socialMode,
     uptime: status.uptime
   });
+  applyBatteryReading(status.battery, true);
   return result({ device: toDevice() });
 }
 
@@ -664,12 +732,13 @@ async function findDevice(alertType, duration) {
   await request(
     config.COMMANDS.FIND_DEVICE,
     protocol.buildFindDevicePayload(
-      alertType === undefined ? settingsService.getAlertType(settingsService.getSettings()) : alertType,
+      // 用户主动查找挂件时始终震动、播放提示旋律并闪灯，不受社交震动开关影响。
+      alertType === undefined ? 2 : alertType,
       duration || 1500
     ),
     { timeout: 3000, retries: 1 }
   );
-  setState({ lastEventText: "挂件正在震动、响铃并闪灯" });
+  setState({ lastEventText: "挂件正在震动、播放提示音并闪灯" });
   return result({ device: toDevice() });
 }
 
@@ -736,6 +805,8 @@ function sendAndWait(frame, command, requestSequence, timeout) {
 async function disconnectDevice() {
   const wasSimulated = state.simulated;
   intentionalDisconnect = true;
+  reconnectGeneration += 1;
+  connectionOperationGeneration += 1;
   cancelReconnect();
   rejectPending(new Error("设备已主动断开"));
   rejectValueWaiters(new Error("设备已主动断开"));
@@ -748,10 +819,12 @@ async function disconnectDevice() {
   return result({ device: toDevice() });
 }
 
-function scheduleReconnect() {
+function scheduleReconnect(generation) {
+  if (generation !== reconnectGeneration) return;
   if (reconnectTimer || reconnectIndex >= RECONNECT_DELAYS.length) {
     if (reconnectIndex >= RECONNECT_DELAYS.length) {
       setState({
+        reconnecting: false,
         canReconnect: Boolean(lastDeviceId),
         rememberedDeviceName: lastDeviceName,
         statusText: "自动重连失败，可以点击重新连接",
@@ -762,12 +835,14 @@ function scheduleReconnect() {
   }
   const delay = RECONNECT_DELAYS[reconnectIndex];
   reconnectIndex += 1;
-  setState({ statusText: `${delay / 1000} 秒后尝试重新连接…` });
+  setState({ reconnecting: true, statusText: `${delay / 1000} 秒后尝试重新连接…` });
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    connectDevice(lastDeviceId).catch(() => {
+    if (generation !== reconnectGeneration) return;
+    connectDevice(lastDeviceId, { reconnectGeneration: generation }).catch(error => {
+      if ((error && error.cancelled) || generation !== reconnectGeneration) return;
       intentionalDisconnect = false;
-      scheduleReconnect();
+      scheduleReconnect(generation);
     });
   }, delay);
 }
@@ -779,22 +854,50 @@ async function reconnectLastDevice(silent) {
     throw new Error("没有可重新连接的挂件，请先搜索设备");
   }
   if (state.connected && state.ready) return result({ device: toDevice() });
+  const generation = reconnectGeneration += 1;
   reconnectIndex = 0;
   cancelReconnect();
   setState({
+    reconnecting: true,
     canReconnect: true,
     rememberedDeviceName: lastDeviceName,
     statusText: `正在重新连接${lastDeviceName ? ` ${lastDeviceName}` : "上次的挂件"}…`,
     errorMessage: ""
   });
   try {
-    return await connectDevice(lastDeviceId);
+    return await connectDevice(lastDeviceId, { reconnectGeneration: generation });
   } catch (error) {
+    if ((error && error.cancelled) || generation !== reconnectGeneration) {
+      if (silent) return result({ device: toDevice() });
+      throw createReconnectCancelledError();
+    }
     intentionalDisconnect = false;
-    scheduleReconnect();
+    scheduleReconnect(generation);
     if (silent) return result({ device: toDevice() });
     throw error;
   }
+}
+
+async function cancelReconnectLastDevice() {
+  reconnectGeneration += 1;
+  connectionOperationGeneration += 1;
+  reconnectIndex = 0;
+  intentionalDisconnect = true;
+  cancelReconnect();
+  const cancelledError = createReconnectCancelledError();
+  rejectPending(cancelledError);
+  rejectValueWaiters(cancelledError);
+  // 先同步使连接代次失效并立即更新界面，不等待 Android BLE 关闭回调。
+  // 底层会在迟到的 createBLEConnection 成功后再次执行兜底关闭。
+  bleService.disconnectDevice().catch(() => {});
+  resetConnectionState("已停止重新连接");
+  setState({
+    canReconnect: Boolean(lastDeviceId),
+    rememberedDeviceName: lastDeviceName,
+    statusText: "已停止重新连接",
+    errorMessage: ""
+  });
+  return result({ device: toDevice() });
 }
 
 function loadRememberedDevice() {
@@ -804,13 +907,16 @@ function loadRememberedDevice() {
   const saved = wx.getStorageSync(LAST_DEVICE_STORAGE_KEY);
   if (!saved || typeof saved !== "object" || typeof saved.deviceId !== "string") return;
   lastDeviceId = saved.deviceId;
-  lastDeviceName = typeof saved.name === "string" ? saved.name : "";
+  lastDeviceName = normalizeDeviceName(saved.name, lastDeviceId, config.defaultDeviceName);
+  if (saved.name !== lastDeviceName && typeof wx.setStorageSync === "function") {
+    wx.setStorageSync(LAST_DEVICE_STORAGE_KEY, { deviceId: lastDeviceId, name: lastDeviceName });
+  }
   setState({ canReconnect: Boolean(lastDeviceId), rememberedDeviceName: lastDeviceName });
 }
 
 function rememberDevice(deviceId, name) {
   lastDeviceId = deviceId;
-  lastDeviceName = name || "云团智能挂件";
+  lastDeviceName = normalizeDeviceName(name, deviceId, config.defaultDeviceName);
   setState({ canReconnect: true, rememberedDeviceName: lastDeviceName });
   if (typeof wx !== "undefined" && typeof wx.setStorageSync === "function") {
     wx.setStorageSync(LAST_DEVICE_STORAGE_KEY, { deviceId: lastDeviceId, name: lastDeviceName });
@@ -830,6 +936,20 @@ function forgetRememberedDevice() {
 function cancelReconnect() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
+}
+
+function createReconnectCancelledError() {
+  const error = new Error("已停止重新连接");
+  error.cancelled = true;
+  return error;
+}
+
+function assertReconnectGeneration(generation) {
+  if (generation !== reconnectGeneration) throw createReconnectCancelledError();
+}
+
+function assertConnectionOperation(generation) {
+  if (generation !== connectionOperationGeneration) throw createReconnectCancelledError();
 }
 
 function waitForValue(characteristicId, timeout) {
@@ -896,6 +1016,7 @@ function rejectMatchingValueWaiters(characteristicId, error) {
 }
 
 function resetConnectionState(statusText) {
+  clearBatteryUnavailableTimer();
   if (socialRegistrationTimer) clearTimeout(socialRegistrationTimer);
   socialRegistrationTimer = null;
   registeredSocialToken = 0;
@@ -956,6 +1077,7 @@ module.exports = {
   getDisplayDevices,
   connectDevice,
   reconnectLastDevice,
+  cancelReconnectLastDevice,
   loadSimulator,
   simulateSocialEncounter,
   disconnectDevice,

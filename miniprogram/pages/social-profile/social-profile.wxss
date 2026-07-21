@@ -25,12 +25,6 @@
 .add-tag-btn { width: 126rpx; min-height: 76rpx; margin: 0; border-radius: 16rpx; background: #e7efe9 !important; color: #365f55 !important; font-size: 27rpx; }
 .selected-tags { margin-top: 18rpx; }
 .selected-tag { padding: 10rpx 16rpx; border-radius: 24rpx; background: #fff4dc; color: #856628; font-size: 25rpx; }
-.intention-option { display: flex; align-items: center; justify-content: space-between; min-height: 100rpx; padding: 16rpx 20rpx; border: 2rpx solid #edf0ee; border-radius: 18rpx; margin-top: 14rpx; }
-.intention-option.selected { border-color: #78a08f; background: #f1f7f3; }
-.intention-label, .intention-description { display: block; }
-.intention-label { font-size: 29rpx; font-weight: 600; }
-.intention-description { margin-top: 7rpx; color: #7b8883; font-size: 24rpx; }
-.radio-dot { color: #52796f; font-size: 34rpx; }
 .private-contact-card { overflow: hidden; }
 .contact-add-row { display: flex; gap: 12rpx; margin-top: 20rpx; }
 .contact-add-row button { min-width: 0; min-height: 66rpx; flex: 1; margin: 0; padding: 0 8rpx; border-radius: 15rpx; background: #e7efe9 !important; color: #41675e !important; font-size: 23rpx; line-height: 66rpx; }
@@ -51,9 +45,7 @@
 .preview-main { flex: 1; min-width: 0; }
 .preview-name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12rpx; }
 .preview-name { font-size: 34rpx; font-weight: 700; }
-.intention-badge { padding: 6rpx 13rpx; border-radius: 18rpx; background: #e4efe8; color: #52796f; font-size: 22rpx; }
 .preview-bio { display: block; margin-top: 13rpx; color: #60706b; font-size: 27rpx; line-height: 1.55; }
 .preview-tags { margin-top: 16rpx; }
 .preview-tags text { padding: 7rpx 13rpx; border-radius: 18rpx; background: #f4f1e9; color: #756b54; font-size: 23rpx; }
 .preview-empty-tags { display: block; margin-top: 14rpx; color: #9aa39f; font-size: 24rpx; }
-.preview-privacy-tip { display: block; margin-top: 18rpx; color: #89938f; font-size: 23rpx; }

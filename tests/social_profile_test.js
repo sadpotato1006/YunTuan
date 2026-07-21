@@ -85,18 +85,13 @@ const pageWxml = fs.readFileSync(
   "utf8"
 );
 assert.match(pageWxml, /open-type="chooseAvatar"/);
-assert.match(pageWxml, /真实相遇后向你打招呼/);
+assert.doesNotMatch(pageWxml, /真实相遇后向你打招呼/);
 assert.match(pageWxml, /兴趣标签/);
-assert.match(pageWxml, /当前社交意愿/);
+assert.doesNotMatch(pageWxml, /当前社交意愿/);
+assert.doesNotMatch(pageWxml, /selectIntention/);
+assert.doesNotMatch(pageWxml, /intentionLabel/);
 assert.match(pageWxml, /私密分享资料/);
 assert.match(pageWxml, /只保存在本机/);
-
-const settingsWxml = fs.readFileSync(
-  path.join(__dirname, "..", "miniprogram", "pages", "settings", "settings.wxml"),
-  "utf8"
-);
-assert.match(settingsWxml, /socialProfile\.nickname/);
-assert.match(settingsWxml, /编辑我的社交名片/);
 
 const deviceWxml = fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "pages", "device", "device.wxml"),
@@ -104,17 +99,26 @@ const deviceWxml = fs.readFileSync(
 );
 assert.match(deviceWxml, /socialProfile\.avatarValue/);
 assert.match(deviceWxml, /socialProfile\.nickname/);
-assert.match(deviceWxml, /device\.lastEncounterProfile\.nickname/);
-assert.match(deviceWxml, /重新获取名片/);
-assert.match(deviceWxml, /bindtap="greetLatestEncounter"/);
+assert.match(deviceWxml, /编辑个人名片/);
+assert.match(deviceWxml, /bindtap="goSocialProfile"/);
+assert.match(deviceWxml, /class="profile-edit-button"/);
+assert.match(deviceWxml, /socialProfile\.bio/);
+assert.match(deviceWxml, /socialProfile\.intentionLabel/);
+assert.match(deviceWxml, /wx:for="{{socialProfile\.tags}}"/);
+assert.doesNotMatch(deviceWxml, /class="profile-manage-button"/);
 assert.doesNotMatch(deviceWxml, /class="device-mark"/);
 
 const encountersWxml = fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "pages", "encounters", "encounters.wxml"),
   "utf8"
 );
+assert.match(encountersWxml, /item\.profile\.nickname/);
+assert.match(encountersWxml, /重新获取名片/);
+assert.match(encountersWxml, /bindtap="sendGreeting"/);
 assert.match(encountersWxml, /打个招呼/);
-assert.match(encountersWxml, /最近 30 次相遇/);
+assert.match(encountersWxml, /汇总最近 30 次相遇/);
+assert.match(encountersWxml, /相遇 \{\{item\.encounterCount\}\} 次/);
+assert.match(encountersWxml, /!item\.alreadyKnown/);
 
 const partnersWxml = fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "pages", "partners", "partners.wxml"),

@@ -4,6 +4,7 @@ const DEFAULT_DEVICE = {
   name: "云团陪伴挂件",
   connected: true,
   battery: 78,
+  batteryStatus: "available",
   socialMode: true
 };
 let memoryDevice = Object.assign({}, DEFAULT_DEVICE);

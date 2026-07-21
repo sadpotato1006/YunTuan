@@ -147,8 +147,21 @@ exports.main = async event => {
       if (profile.soloTestForOwnerKey && profile.soloTestForOwnerKey !== ownerKey) {
         return success({ profile: null, reason: "not_found" });
       }
-      const interactionRef = await createEncounterReference(ownerKey, mapping.ownerKey);
-      return success({ profile: toPublicProfile(profile), interactionRef });
+      const peerKey = sha256(`encounter-peer:${ownerKey}:${mapping.ownerKey}`);
+      const existingMatch = await readDocument(
+        MATCH_COLLECTION,
+        matchDocumentId(ownerKey, mapping.ownerKey)
+      );
+      const alreadyKnown = Boolean(existingMatch);
+      const interactionRef = alreadyKnown
+        ? ""
+        : await createEncounterReference(ownerKey, mapping.ownerKey);
+      return success({
+        profile: toPublicProfile(profile),
+        peerKey,
+        alreadyKnown,
+        interactionRef
+      });
     }
     const routed = await routeSocialAction(action, ownerKey, safeEvent, socialActionHandlers);
     if (routed.handled) return success(routed.data);

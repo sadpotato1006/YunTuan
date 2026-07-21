@@ -2,7 +2,7 @@
 
 > **板型已确认：** 根据你提供的商品图文字（ESP32-S3 开发板 N16R8 44脚），以下设计针对 **ESP32-S3-DevKitC-1 / N16R8 44脚开发板**。你发来的实物照片当前模型无法读取，因此模块封装仍按文字描述推断：INMP441 麦克风 + MAX98357A 功放 + 扬声器 + 按键 + 拨动开关 + 3.7V 锂电池 + TP4056 充电 + MT3608 升压。请焊接前核对你板子上的丝印。
 >
-> **为什么不用 ESP32-WROOM-32 那套脚位：** ESP32-S3 的 IO 矩阵与 GPIO 编号和旧版 ESP32 不同，GPIO1/4/5/7/8/13/14/15/16/17/18 等才是 S3 上安全的通用 IO；GPIO26–32 通常接片内 Flash/PSRAM，GPIO19/20 是 USB，GPIO0/3/45/46 是 strapping 脚，应避开。注意：ESP32-S3-DevKitC-1 44 脚开发板没有引出 GPIO27，因此拨动开关改用 GPIO18。
+> **为什么不用 ESP32-WROOM-32 那套脚位：** ESP32-S3 的 IO 矩阵与 GPIO 编号和旧版 ESP32 不同。本项目以已经焊接完成的 A1 实物引脚表为唯一依据；GPIO46 虽是 strapping 脚，但当前硬件已经固定用于 I2S WS，外围电路不得在复位时强行改变其电平。GPIO26–32 通常连接片内 Flash/PSRAM，GPIO19/20 用于 USB。
 
 ---
 
@@ -10,27 +10,29 @@
 
 | 外设 | 信号 | ESP32-S3 GPIO | 方向 | 说明 |
 |---|---|---|---|---|
-| **INMP441 麦克风** | **SCK**（位时钟） | **GPIO5** | OUT | I2S BCK，由 ESP32 主时钟驱动。 |
-| | **SD**（数据输出） | **GPIO7** | IN | 麦克风 → ESP32。 |
-| | **WS**（字选） | **GPIO4** | OUT | I2S WS/LRCLK。 |
+| **INMP441 麦克风** | **SCK**（位时钟） | **GPIO9** | OUT | I2S BCK，由 ESP32 主时钟驱动。 |
+| | **SD**（数据输出） | **GPIO4** | IN | 麦克风 → ESP32。 |
+| | **WS**（字选） | **GPIO46** | OUT | I2S WS/LRCLK。 |
 | | **L/R**（通道选择） | **GND** | — | 接 GND 选择左声道（WS 低电平）。 |
 | | **VDD** | **3.3V** | — | 取自 ESP32 开发板 3.3V 输出。 |
 | | **CHIPEN** | **3.3V** | — | 麦克风芯片使能，接高电平。 |
 | | **GND**（5/6/9 脚） | **GND** | — | 共地。 |
-| **MAX98357A 功放** | **BCLK** | **GPIO16** | OUT | 扬声器 I2S 位时钟。 |
-| | **LRC** | **GPIO15** | OUT | I2S WS。 |
-| | **DIN** | **GPIO8** | OUT | I2S 数据 → 功放。 |
+| **MAX98357A 功放** | **BCLK** | **GPIO9** | OUT | 与麦克风共用 I2S 位时钟。 |
+| | **LRC** | **GPIO46** | OUT | 与麦克风共用 I2S WS。 |
+| | **DIN** | **GPIO10** | OUT | I2S 数据 → 功放。 |
 | | **SHDN**（使能） | **GPIO17** | OUT | 高电平使能；说话时拉低可静音消回声。 |
 | | **GAIN** | **GND 或 VCC** | — | GND ≈ 9 dB，VCC ≈ 15 dB，按所需音量固定。 |
 | | **VDD** | **5V** | — | 取自卑压模块输出 5V（2.7–5.5 V 都兼容）。 |
 | | **GND** | **GND** | — | 共地。 |
 | **扬声器** | AUD+ / AUD− | → MAX98357A OUT+ / OUT− | — | 典型 4 Ω / 3 W，线尽量短，双绞。 |
-| **PTT 按键** | 低电平有效 | GPIO13 | IN（上拉） | ISR → queue，task 内消抖。 |
+| **PTT 按键** | 低电平有效 | GPIO8 | IN（上拉） | ISR → queue，task 内消抖。 |
+| **提醒输出** | 高电平有效 | GPIO2 | OUT | 蜂鸣器/振动马达控制。 |
+| **状态灯** | 高电平有效 | GPIO48 | OUT | 录音、查找挂件状态指示。 |
 | **唤醒按键** | 低电平有效 | GPIO14 | IN（上拉，RTC） | 支持 `ext1` 从 deep sleep 唤醒。 |
 | **拨动开关** | 低电平有效 | GPIO18 | IN（上拉） | task 内消抖。 |
-| **电池检测** | 分压后 | GPIO1（ADC1_CH0） | IN | 100k/100k 分压，4.2 V → 2.1 V，安全。 |
+| **电池检测** | 分压后 | GPIO1（ADC1_CH0） | IN | 沿用现有 100k/100k 分压，4.2 V → 2.1 V，不增加额外元件。 |
 
-**选脚理由：** 避开 S3 的 strapping 脚（GPIO0/3/45/46）、USB 脚（GPIO19/20）和内部 Flash/PSRAM 脚（GPIO26–32）。麦克风输入、电池检测使用普通 GPIO 输入；功放 I2S 与麦克风 I2S 分别走不同 I2S 外设，避免收发抢时钟。
+**硬件约束：** 本表对应已经焊接完成的 A1 硬件，GPIO 编号属于固定硬件接口，不得在普通代码重构中调整。麦克风与功放共用 I2S BCLK/WS，由同一个 I2S0 全双工外设驱动。
 
 ---
 
@@ -56,11 +58,11 @@ ESP32 板载 LDO ──► 3.3V 轨 ──► INMP441 VDD、按键/开关上拉
 | | **VIN-** | 系统地 GND | 共地。 |
 | | **OUT+** | ESP32 **5V/VIN**、MAX98357A **VDD** | 输出 5 V（用多圈可调电位器校准到 5.0 V）。 |
 | | **OUT-** | 系统地 GND | 共地。 |
-| **电池分压** | 4.2 V 端 | 100k 电阻 R1 | 接 TP4056 OUT+ 或电池正极。 |
-| | 分压中点 | ESP32 **GPIO1**（ADC1_CH0） | 4.2 V 时约 2.1 V，再用 `ADC_ATTEN_DB_11` 采样。 |
+| **电池分压** | 4.2 V 端 | 100k 电阻 R1 | 沿用 A1 成品当前电池采样焊点。 |
+| | 分压中点 | ESP32 **GPIO1**（ADC1_CH0） | 4.2 V 时约 2.1 V，使用 `ADC_ATTEN_DB_11` 和软件预采样读取。 |
 | | GND 端 | 100k 电阻 R2 → GND | 共地。 |
 
-本版本只读取大致电量，不读取 TP4056 的 `CHRG`/`STDBY`，因此不需要 GPIO9、GPIO10、光耦或额外充电检测电路。充电中/已充满继续看 TP4056 小板自带的红色和蓝色/绿色指示灯，小程序只显示电量百分比。
+本版本只读取大致电量，不读取 TP4056 的 `CHRG`/`STDBY`，因此不需要光耦或额外充电检测电路。GPIO9 和 GPIO10 已分别用于 I2S BCLK 与扬声器 DIN，不能用于充电状态检测。充电中/已充满继续看 TP4056 小板自带的红色和蓝色/绿色指示灯；小程序显示近似百分比，ADC 未确认有效时显示“电量读取中”或“电量暂不可用”。
 
 - **使能控制：** 可把 MT3608 的 `EN` 脚或一个 P-MOS 接到 **GPIO21**，deep sleep 时切断功放和外围，进一步省电。
 - **典型翻车点：** 升压后的 5V 不能和 USB 的 5V 直接并到一起，否则回灌。两者之间加一个肖特基二极管做 OR，或物理切换。TP4056 的 OUT+ 在 USB 未插入时就是电池直通，所以 MT3608 始终有电。如果你需要关机时彻底断电，应在电池与 TP4056 之间加保护开关或 MOSFET 开关。
@@ -94,11 +96,12 @@ ESP32 板载 LDO ──► 3.3V 轨 ──► INMP441 VDD、按键/开关上拉
 
 1. **电源**先上：电池 → TP4056 → MT3608 → 测 MT3608 OUT+ 调到 5.0V → 接 ESP32 5V/VIN。先只插电池，**先不上 USB**，用万用表量 5V。
 2. **共地**：所有模块 GND 接到 ESP32 任意 GND 引脚。
-3. **INMP441**：SCK→GPIO5，SD→GPIO7，WS→GPIO4，L/R→GND，VDD+CHIPEN→3.3V。先不上扬声器，跑一个 I2S 录 5 秒，看串口打印 RMS。
-4. **MAX98357A**：BCLK→GPIO16，LRC→GPIO15，DIN→GPIO8，SHDN→GPIO17，VDD→5V，GAIN→GND。先别接扬声器，量 OUT+/OUT- 静态电压应在 1.65 V 附近（VCC/2）。
-5. **按键与开关**：GPIO13/14/18 内部上拉，一端接 GPIO，另一端接 GND。
-6. **电池分压**：100k+100k，4.2V 端接 TP4056 OUT+，分压中点接 GPIO1，GND 端接地。
-7. **最后上电**：接扬声器，串口看日志，依次验证录音、播放、按键事件和电量百分比。
+3. **INMP441**：SCK→GPIO9，SD→GPIO4，WS→GPIO46，L/R→GND，VDD+CHIPEN→3.3V。先不上扬声器，跑一个 I2S 录 5 秒，看串口打印 RMS。
+4. **MAX98357A**：BCLK→GPIO9，LRC/WS→GPIO46，DIN→GPIO10，VDD→5V，GAIN→GND。先别接扬声器，量 OUT+/OUT- 静态电压应在 1.65 V 附近（VCC/2）。
+5. **PTT 按键**：GPIO8 内部上拉，一端接 GPIO8，另一端接 GND。提醒输出接 GPIO2，状态灯接 GPIO48。
+6. **电池分压**：保持 A1 成品现有 100k+100k 与 GPIO1 焊接，不增加电容，不需要返工。
+7. **电量校准**：万用表同时测电池端与 GPIO1，中点应约为电池端的一半。分别在满电、日常使用中段和低电量下记录串口电压，用于微调 `BATTERY_SCALE_*` 和分段曲线。
+8. **最后上电**：接扬声器，串口看日志，依次验证录音、播放、按键事件和“约 xx%”电量。
 
 ---
 
@@ -171,7 +174,7 @@ static void IRAM_ATTR btn_isr(void *arg) {
     xQueueSendFromISR(btn_q, &pin, &hp);
     if (hp) portYIELD_FROM_ISR();
 }
-/* 初始化：gpio_install_isr_service(); gpio_isr_handler_add(GPIO13, btn_isr, (void*)GPIO13); */
+/* 初始化：gpio_install_isr_service(); gpio_isr_handler_add(GPIO8, btn_isr, (void*)GPIO8); */
 ```
 
 **稳定性三板斧：**
@@ -267,7 +270,7 @@ static void IRAM_ATTR btn_isr(void *arg) {
     xQueueSendFromISR(btn_q, &pin, &hp);
     if (hp) portYIELD_FROM_ISR();
 }
-/* gpio_install_isr_service(); gpio_isr_handler_add(GPIO13, btn_isr, (void*)GPIO13); */
+/* gpio_install_isr_service(); gpio_isr_handler_add(GPIO8, btn_isr, (void*)GPIO8); */
 ```
 
 **Deep sleep 与 GPIO14 唤醒：**

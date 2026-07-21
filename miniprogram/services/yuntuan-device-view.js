@@ -1,9 +1,10 @@
 function toDevice(state) {
   return {
     id: state.deviceId || "", name: state.name || "云团智能挂件", connected: state.connected,
-    connecting: state.connecting, ready: state.ready, simulated: state.simulated,
+    connecting: state.connecting, reconnecting: state.reconnecting,
+    ready: state.ready, simulated: state.simulated,
     canReconnect: state.canReconnect, rememberedDeviceName: state.rememberedDeviceName,
-    battery: state.battery, socialMode: state.socialMode,
+    battery: state.battery, batteryStatus: state.batteryStatus, socialMode: state.socialMode,
     socialReminder: state.socialReminder, vibration: state.vibration, sound: state.sound,
     uptime: state.uptime, protocolMajor: state.protocolMajor, protocolMinor: state.protocolMinor,
     capabilities: state.capabilities, securityMode: state.securityMode, bindState: state.bindState,

@@ -3,6 +3,7 @@ const bufferUtils = require("../utils/buffer");
 const config = require("../config/ble");
 const bleMock = require("../mock/ble");
 const diagnostics = require("./diagnostics");
+const { getAdvertisedDeviceName, normalizeDeviceName } = require("../utils/ble-device-name");
 const { formatTime, normalizeUuid, sameUuid, shortUuid, getStandardValueMeaning, formatCharacteristic, getServiceName, getCharacteristicName } = require("./ble-helpers");
 
 const MAX_LOGS = 200;
@@ -27,6 +28,7 @@ let subscribers = [];
 let valueSubscribers = [];
 let scanTimer = null;
 let logSequence = 0;
+let connectionAttemptGeneration = 0;
 let unsubscribeDeviceFound = null;
 let unsubscribeConnection = null;
 let unsubscribeAdapter = null;
@@ -185,7 +187,7 @@ function handleDeviceFound(result) {
 }
 
 function normalizeDevice(device) {
-  const name = device.name || device.localName || "未命名设备";
+  const name = getAdvertisedDeviceName(device, "未命名设备");
   return {
     deviceId: device.deviceId,
     name,
@@ -306,15 +308,23 @@ function getDisplayDevices(onlyYuntuan) {
   return state.devices.filter(device => device.name.startsWith(config.deviceNamePrefix));
 }
 
-async function connectDevice(deviceId) {
+async function connectDevice(deviceId, rememberedDeviceName) {
   if (!deviceId) throw new Error("请选择要连接的设备");
   await initialize();
   if (state.discovering) await stopScan();
   if (state.connected && state.deviceId === deviceId) return getState();
   if (state.connected && state.deviceId !== deviceId) await disconnectDevice();
+  const attemptGeneration = connectionAttemptGeneration += 1;
 
   const selected = state.devices.find(device => device.deviceId === deviceId);
-  const deviceName = selected ? selected.name : deviceId;
+  const rememberedName = normalizeDeviceName(
+    rememberedDeviceName,
+    deviceId,
+    config.defaultDeviceName
+  );
+  const deviceName = selected
+    ? getAdvertisedDeviceName(selected, rememberedName)
+    : rememberedName;
   setState({
     connecting: true,
     connected: false,
@@ -328,10 +338,12 @@ async function connectDevice(deviceId) {
 
   try {
     await ble.connect(deviceId, config.connectTimeout);
+    assertConnectionAttempt(attemptGeneration);
     setState({ statusText: "连接成功，正在读取服务…" });
     addLog("CONNECT", "BLE 连接成功，开始发现服务");
 
     const serviceResult = await ble.getServices(deviceId);
+    assertConnectionAttempt(attemptGeneration);
     const rawServices = Array.isArray(serviceResult.services) ? serviceResult.services : [];
     const services = [];
 
@@ -341,9 +353,13 @@ async function connectDevice(deviceId) {
       let errorMessage = "";
       try {
         const result = await ble.getCharacteristics(deviceId, rawService.uuid);
+        assertConnectionAttempt(attemptGeneration);
         characteristics = (result.characteristics || []).map(formatCharacteristic);
         addLog("GATT", `发现服务：${getServiceName(rawService.uuid)}`, `${rawService.uuid} | ${characteristics.length} 个特征值`);
       } catch (error) {
+        if ((error && error.cancelled) || attemptGeneration !== connectionAttemptGeneration) {
+          throw createConnectionCancelledError();
+        }
         errorMessage = error.message;
         addLog("ERROR", `读取服务特征值失败：${shortUuid(rawService.uuid)}`, error.message);
       }
@@ -356,10 +372,20 @@ async function connectDevice(deviceId) {
       });
     }
 
+    assertConnectionAttempt(attemptGeneration);
     setState({ connecting: false, connected: true, services, statusText: `连接成功，发现 ${services.length} 个服务` });
     addLog("CONNECT", "GATT 服务发现完成", `${services.length} 个服务`);
     return getState();
   } catch (error) {
+    if ((error && error.cancelled) || attemptGeneration !== connectionAttemptGeneration) {
+      // Android 可能在第一次 closeBLEConnection 调用后才完成旧的
+      // createBLEConnection。若此时没有新连接在进行，再补一次关闭，
+      // 避免已经取消的连接在后台复活。
+      if (!state.connecting && !state.connected && !state.simulated) {
+        try { await ble.disconnect(deviceId); } catch (ignore) {}
+      }
+      throw createConnectionCancelledError();
+    }
     try { await ble.disconnect(deviceId); } catch (ignore) {}
     setState({ connecting: false, connected: false, services: [], statusText: "设备连接失败", errorMessage: error.message });
     addLog("ERROR", "设备连接失败", error.message);
@@ -536,6 +562,7 @@ function updateCharacteristic(serviceId, characteristicId, patch) {
 
 async function disconnectDevice() {
   clearScanTimer();
+  connectionAttemptGeneration += 1;
   const deviceId = state.deviceId;
   if (!deviceId || (!state.connected && !state.connecting)) {
     setState({ connected: false, connecting: false, services: [], statusText: "设备未连接" });
@@ -562,6 +589,17 @@ async function disconnectDevice() {
     addLog("CONNECT", "设备已断开");
   }
   return getState();
+}
+
+function assertConnectionAttempt(attemptGeneration) {
+  if (attemptGeneration === connectionAttemptGeneration) return;
+  throw createConnectionCancelledError();
+}
+
+function createConnectionCancelledError() {
+  const error = new Error("已停止重新连接");
+  error.cancelled = true;
+  return error;
 }
 
 async function dispose(options) {

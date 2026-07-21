@@ -44,6 +44,13 @@ const { createStreamingSpeechQueue } = require("../miniprogram/pages/chat/stream
   assert.strictEqual(maximumActiveSyntheses, 1);
   assert.deepStrictEqual(synthesisOrder, ["第一段。", "第二段。", "第三段。"]);
   assert.deepStrictEqual(playbackOrder, ["第一段。", "第三段。"]);
+
+  page._pageActive = false;
+  const pausedQueue = createStreamingSpeechQueue(page, chatServiceStub, ttsServiceStub, null);
+  pausedQueue.enqueue("页面隐藏后不应合成");
+  await pausedQueue.finish();
+  assert.deepStrictEqual(synthesisOrder, ["第一段。", "第二段。", "第三段。"]);
+  assert.deepStrictEqual(playbackOrder, ["第一段。", "第三段。"]);
   console.log("chat speech queue tests passed");
 })().catch(error => {
   console.error(error);

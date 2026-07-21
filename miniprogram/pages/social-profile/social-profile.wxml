@@ -54,23 +54,6 @@
     </view>
   </view>
 
-  <view class="card form-card">
-    <view class="section-title">当前社交意愿</view>
-    <view
-      wx:for="{{intentions}}"
-      wx:key="value"
-      class="intention-option {{profile.intention === item.value ? 'selected' : ''}}"
-      data-value="{{item.value}}"
-      bindtap="selectIntention"
-    >
-      <view>
-        <text class="intention-label">{{item.label}}</text>
-        <text class="intention-description">{{item.description}}</text>
-      </view>
-      <text class="radio-dot">{{profile.intention === item.value ? '●' : '○'}}</text>
-    </view>
-  </view>
-
   <view class="card form-card private-contact-card">
     <view class="field-header">
       <text class="section-title compact-title">私密分享资料</text>
@@ -107,14 +90,12 @@
     <view class="preview-main">
       <view class="preview-name-row">
         <text class="preview-name">{{profile.nickname || '云团朋友'}}</text>
-        <text class="intention-badge">{{intentionLabel}}</text>
       </view>
       <text class="preview-bio">{{profile.bio || '很高兴在云团遇见你'}}</text>
       <view wx:if="{{profile.tags.length}}" class="preview-tags">
         <text wx:for="{{profile.tags}}" wx:key="*this">{{item}}</text>
       </view>
       <text wx:else class="preview-empty-tags">还没有选择兴趣标签</text>
-      <text class="preview-privacy-tip">对方只能在真实相遇后向你打招呼</text>
     </view>
   </view>
 </view>

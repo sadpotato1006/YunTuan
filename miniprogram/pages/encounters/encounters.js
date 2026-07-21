@@ -35,6 +35,10 @@ Page({
   async sendGreeting(event) {
     const encounterId = event.currentTarget.dataset.id;
     const record = encounterStore.getRecord(encounterId);
+    if (record && record.alreadyKnown) {
+      wx.showToast({ title: "已经是伙伴，不需要再打招呼", icon: "none" });
+      return;
+    }
     if (!record || !record.interactionRef || this.data.operatingId) {
       wx.showToast({ title: "这次相遇暂时无法发送招呼", icon: "none" });
       return;

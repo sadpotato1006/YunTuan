@@ -40,6 +40,14 @@ function trimMessages(items) {
   return messages.slice(-MAX_MESSAGES_PER_CONVERSATION);
 }
 
+function cacheProfile(value) {
+  if (!value || typeof value !== "object") return null;
+  const profile = Object.assign({}, value);
+  delete profile.avatarDisplayUrl;
+  delete profile.avatarFallback;
+  return profile;
+}
+
 function readConversation(conversationId) {
   const id = String(conversationId || "");
   if (!validConversationId(id)) return null;
@@ -58,7 +66,7 @@ function writeConversation(conversationId, state) {
   const store = readStore();
   const now = Date.now();
   store.entries[id] = {
-    profile: source.profile && typeof source.profile === "object" ? source.profile : null,
+    profile: cacheProfile(source.profile),
     messages,
     hasMoreMessages: wasTrimmed || source.hasMoreMessages === true,
     messageCursor: wasTrimmed && messages[0]

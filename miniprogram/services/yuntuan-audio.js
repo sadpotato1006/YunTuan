@@ -568,11 +568,16 @@ function markReady() {
   });
 }
 
+function cancelRecognition(sessionId, reason) {
+  realtimeAsr.cancel(sessionId, reason || "挂件语音识别已暂停");
+}
+
 module.exports = {
   attach,
   getState,
   subscribe,
   subscribeCompleted,
   removeFile,
-  markReady
+  markReady,
+  cancelRecognition
 };

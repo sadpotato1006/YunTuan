@@ -87,9 +87,9 @@ App({
     this.globalData.socialBadgeCount = count;
     if (!wx.showTabBarRedDot || !wx.hideTabBarRedDot) return;
     if (count > 0) {
-      wx.showTabBarRedDot({ index: 2, fail() {} });
+      wx.showTabBarRedDot({ index: 1, fail() {} });
     } else {
-      wx.hideTabBarRedDot({ index: 2, fail() {} });
+      wx.hideTabBarRedDot({ index: 1, fail() {} });
     }
   },
 

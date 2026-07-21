@@ -63,6 +63,7 @@ function simulateSocialEncounter(peerToken, rssi) {
   return bleDevice.simulateSocialEncounter(peerToken, rssi);
 }
 function reconnectLastDevice() { return bleDevice.reconnectLastDevice(false); }
+function cancelReconnectLastDevice() { return bleDevice.cancelReconnectLastDevice(); }
 function findDevice() { return bleDevice.findDevice(undefined, 1800); }
 function ping() { return bleDevice.ping(); }
 function refreshStatus() { return bleDevice.getStatus(); }
@@ -86,6 +87,7 @@ module.exports = {
   loadSimulator,
   simulateSocialEncounter,
   reconnectLastDevice,
+  cancelReconnectLastDevice,
   findDevice,
   ping,
   refreshStatus,

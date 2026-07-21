@@ -12,8 +12,12 @@ const deviceService = fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "services", "yuntuan-device.js"),
   "utf8"
 );
-const devicePage = fs.readFileSync(
-  path.join(__dirname, "..", "miniprogram", "pages", "device", "device.wxml"),
+const partnersPage = fs.readFileSync(
+  path.join(__dirname, "..", "miniprogram", "pages", "partners", "partners.wxml"),
+  "utf8"
+);
+const encountersPage = fs.readFileSync(
+  path.join(__dirname, "..", "miniprogram", "pages", "encounters", "encounters.wxml"),
   "utf8"
 );
 
@@ -41,8 +45,10 @@ assert.match(deviceService, /title: "遇到云团伙伴啦"/);
 assert.match(deviceService, /socialService\.resolveToken\(peerToken\)/);
 assert.match(deviceService, /SOCIAL_REGISTRATION_REFRESH_MS/);
 assert.match(deviceService, /retryLastEncounterProfile/);
-assert.match(devicePage, /device\.lastEncounterAt/);
-assert.match(devicePage, /device\.lastEncounterProfile/);
+assert.match(partnersPage, /class="encounter-entry card"/);
+assert.match(partnersPage, /bindtap="openEncounters"/);
+assert.match(encountersPage, /wx:for="\{\{records\}\}"/);
+assert.match(encountersPage, /item\.profile/);
 assert.doesNotMatch(
   firmware,
   /g_advertising->addServiceUUID\(BATTERY_SERVICE_UUID\)/,

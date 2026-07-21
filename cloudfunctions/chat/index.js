@@ -145,11 +145,7 @@ async function sendChatMessage(event, openid) {
     );
     await assertTextSafe(reply, openid, "AI 回复");
 
-    const data = {
-      reply,
-      // 目前暂时不做真实情绪分析
-      emotion: "unknown"
-    };
+    const data = { reply };
     try {
       await chatIdempotency.complete(openid, claim.requestKey, data);
     } catch (persistenceError) {

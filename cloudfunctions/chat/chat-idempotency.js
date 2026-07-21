@@ -32,7 +32,7 @@ function createChatIdempotency(db, collectionName) {
             owner: false,
             cached: true,
             requestKey,
-            data: { reply: existing.reply, emotion: existing.emotion || "unknown" }
+            data: { reply: existing.reply }
           };
           return;
         }
@@ -103,7 +103,6 @@ function createChatIdempotency(db, collectionName) {
     await updateRequest(openid, requestKey, {
       status: "completed",
       reply: data.reply,
-      emotion: data.emotion || "unknown",
       updatedAt: Date.now()
     });
   }

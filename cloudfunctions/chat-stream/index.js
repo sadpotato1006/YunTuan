@@ -90,7 +90,6 @@ app.post(["/", "/chat"], async (request, response) => {
       sendEvent(response, "segment", { index: 0, content: cachedReply, cached: true });
       sendEvent(response, "done", {
         reply: cachedReply,
-        emotion: requestClaim.data.emotion || "unknown",
         segmentCount: 1,
         cached: true
       });
@@ -205,10 +204,7 @@ app.post(["/", "/chat"], async (request, response) => {
     if (disconnected) return;
     const reply = normalizeReply(safeReplyParts.join(""));
     try {
-      await chatIdempotency.complete(openid, requestClaim.requestKey, {
-        reply,
-        emotion: "unknown"
-      });
+      await chatIdempotency.complete(openid, requestClaim.requestKey, { reply });
       requestFinished = true;
     } catch (persistenceError) {
       console.error("保存流式聊天幂等结果失败：", {
@@ -219,7 +215,7 @@ app.post(["/", "/chat"], async (request, response) => {
       error.keepIdempotencyPending = true;
       throw error;
     }
-    sendEvent(response, "done", { reply, emotion: "unknown", segmentCount: emittedSegments });
+    sendEvent(response, "done", { reply, segmentCount: emittedSegments });
     response.end();
   } catch (error) {
     if (requestClaim && requestClaim.owner && !requestFinished &&

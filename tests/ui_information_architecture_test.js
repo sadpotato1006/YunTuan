@@ -7,41 +7,77 @@ const read = file => fs.readFileSync(path.join(root, file), "utf8");
 const app = JSON.parse(read("miniprogram/app.json"));
 const tabMap = Object.fromEntries(app.tabBar.list.map(item => [item.pagePath, item.text]));
 
-assert.strictEqual(tabMap["pages/home/home"], "首页");
+assert.deepStrictEqual(app.tabBar.list.map(item => item.pagePath), [
+  "pages/device/device",
+  "pages/partners/partners"
+]);
 assert.strictEqual(tabMap["pages/device/device"], "设备");
 assert.strictEqual(tabMap["pages/partners/partners"], "伙伴");
-assert.strictEqual(tabMap["pages/emotion/emotion"], "心情");
-assert.strictEqual(tabMap["pages/settings/settings"], "我的");
+assert.strictEqual(app.pages[0], "pages/device/device");
+assert.ok(!app.pages.includes("pages/home/home"));
+assert.ok(!app.pages.includes("pages/emotion/emotion"));
+assert.ok(!app.pages.includes("pages/settings/settings"));
+assert.ok(!fs.existsSync(path.join(root, "miniprogram", "services", "emotion.js")));
+assert.ok(!fs.existsSync(path.join(root, "cloudfunctions", "emotion")) ||
+  fs.readdirSync(path.join(root, "cloudfunctions", "emotion")).length === 0);
 assert.ok(app.pages.includes("pages/device-lab/device-lab"));
 
-const home = read("miniprogram/pages/home/home.wxml");
-assert.ok(!home.includes("quick-grid"), "首页不应重复堆叠底部导航入口");
-
 const device = read("miniprogram/pages/device/device.wxml");
-assert.ok(device.includes("最近相遇"));
-assert.ok(device.includes("打个招呼"));
-assert.ok(device.includes("设备详细信息"));
-assert.ok(device.includes("社交提醒"));
-assert.ok(device.includes("振动反馈"));
-assert.ok(device.includes("声音提示"));
+const deviceJs = read("miniprogram/pages/device/device.js");
+const deviceStyle = read("miniprogram/pages/device/device.wxss");
+assert.ok(!device.includes("最近相遇"), "相遇入口不应继续占用设备页");
+assert.ok(!device.includes("打个招呼"));
+assert.ok(!device.includes("查看挂件状态，管理常用功能"), "设备页不应保留标题副文案");
+assert.ok(!device.includes("设备型号"), "老人使用的设备页不应展示型号");
+assert.ok(!device.includes("固件版本"), "老人使用的设备页不应展示固件版本");
+assert.ok(!device.includes("硬件版本"), "老人使用的设备页不应展示硬件版本");
+assert.ok(device.includes("开发者工具"));
+assert.ok(device.indexOf("开发者工具") > device.indexOf("隐私与数据"), "开发者入口应放在页面底部");
+assert.ok(deviceJs.includes("goDeveloperTools"));
+assert.ok(device.includes("震动反馈"));
+assert.ok(device.includes("提醒查找挂件"));
+assert.ok(device.includes("断开连接"));
+assert.ok(device.indexOf("提醒查找挂件") < device.indexOf("断开连接"), "查找按钮应在左，断开按钮应在右");
+assert.ok(deviceJs.includes("runDisconnectDevice"));
+assert.ok(deviceStyle.includes(".device-action-row { display: flex"));
+assert.ok(!device.includes("社交提醒"));
+assert.ok(!device.includes("声音提示"));
+assert.ok(device.includes("编辑个人名片"));
+assert.ok(device.includes("隐私与数据"));
+assert.ok(device.includes("清除本机缓存"));
+assert.ok(device.includes("删除全部个人数据"));
+assert.ok(device.includes('wx:if="{{showPrivateTools}}"'), "低频隐私工具应默认折叠");
+assert.ok(deviceJs.includes("dataPrivacyService.deleteCloudData()"));
+assert.ok(!read("miniprogram/services/data-privacy.js").includes("emotion"));
 assert.ok(!device.includes("本机模拟 Token"), "正式设备页不应展示模拟 Token 工具");
-assert.ok(!device.includes("设备管理"), "设备信息和调试工具应收进同一个详情入口");
+assert.ok(!device.includes("设备 ID"), "老人使用的扫描列表不应展示底层设备 ID");
+assert.ok(!device.includes("dBm"), "老人使用的扫描列表不应展示 RSSI 技术值");
+assert.ok(deviceStyle.includes("font-size: 30rpx"), "设备页正文应使用适老化字号");
+assert.ok(deviceStyle.includes("min-height: 96rpx"), "主要操作应有足够大的触控区域");
+assert.ok(deviceStyle.includes("width: 120rpx"), "名片编辑按钮应固定为右侧小按钮");
 
 const lab = read("miniprogram/pages/device-lab/device-lab.wxml");
-assert.ok(lab.includes("设备详细信息"));
+assert.ok(lab.includes("开发者工具"));
 assert.ok(lab.includes("设备型号"));
+assert.ok(lab.includes("固件版本"));
+assert.ok(lab.includes("硬件版本"));
+assert.ok(lab.includes("协议版本"));
 assert.ok(lab.includes("断开当前设备"));
 assert.ok(lab.includes("一个账号完整测试"));
 assert.ok(lab.includes("两个账号联调"));
 assert.ok(lab.includes("通用 BLE 联调工具"));
 
-const settings = read("miniprogram/pages/settings/settings.wxml");
-assert.ok(settings.includes("隐私与数据"));
-assert.ok(!settings.includes("挂件提醒"));
-assert.ok(!settings.includes("伙伴与消息"));
-assert.ok(!settings.includes("相遇记录"));
-
 const partners = read("miniprogram/pages/partners/partners.wxml");
+const partnersStyle = read("miniprogram/pages/partners/partners.wxss");
+const partnersJs = read("miniprogram/pages/partners/partners.js");
+assert.ok(partners.includes("云团陪伴"));
+assert.ok(!partners.includes("和云团说说话，也可以联系认识的朋友"), "伙伴页不应保留标题副文案");
+assert.ok(!partners.includes("想聊聊天、问点事情"), "伙伴入口不应堆叠解释性小字");
+assert.ok(!partners.includes("查看最近遇见的"), "最近相遇入口不应堆叠解释性小字");
+assert.ok(partners.includes('bindtap="openAiChat"'));
+assert.ok(partners.includes("最近相遇"));
+assert.ok(partners.includes('bindtap="openEncounters"'));
+assert.ok(partnersJs.includes("deviceService.getEncounterRecords()"));
 assert.ok(partners.includes("conversation-list"));
 assert.ok(partners.includes("朋友"));
 assert.ok(partners.includes("招呼"));
@@ -51,24 +87,25 @@ assert.ok(partners.includes('bindtap="toggleSection"'));
 assert.ok(partners.includes('catchtap="respondGreeting"'));
 assert.ok(!partners.includes('data-view="messages"'));
 assert.ok(!partners.includes('data-view="people"'));
+assert.ok(partnersStyle.includes("font-size: 28rpx"), "伙伴页正文应使用适老化字号");
+assert.ok(partnersStyle.includes("min-height: 132rpx"), "伙伴页主入口应有足够大的触控区域");
 
 const tabSwipe = read("miniprogram/utils/tab-swipe.js");
-assert.ok(tabSwipe.includes("MIN_DISTANCE = 64"));
+assert.ok(tabSwipe.includes("rubberBand(deltaX"), "边界滑动应使用渐进阻尼");
+assert.ok(tabSwipe.includes("VELOCITY_PROJECTION_SECONDS"), "松手后应按滑动速度预测去向");
+assert.ok(tabSwipe.includes("cubic-bezier(.2,.82,.2,1)"), "页面切换应使用平滑抽屉曲线");
+assert.ok(tabSwipe.includes("softClamp(deltaX"), "页面长距离拖动应使用软边界，避免突然截停");
+assert.ok(tabSwipe.includes("motionDuration("), "页面完成与回弹动画应根据距离和速度动态计算");
+assert.ok(tabSwipe.includes("scale(${safeScale.toFixed(4)})"), "页面切换应有轻量深度变化");
 [
-  "home/home",
   "device/device",
-  "partners/partners",
-  "emotion/emotion",
-  "settings/settings"
+  "partners/partners"
 ].forEach(page => {
   const wxml = read(`miniprogram/pages/${page}.wxml`);
   assert.ok(wxml.includes('bindtouchstart="onTabSwipeStart"'), `${page} 应支持左右滑动`);
   assert.ok(wxml.includes('bindtouchmove="onTabSwipeMove"'), `${page} 应提供跟手动画`);
   assert.ok(wxml.includes('style="{{tabSwipeStyle}}"'), `${page} 应绑定滑动过渡样式`);
 });
-const emotion = read("miniprogram/pages/emotion/emotion.wxml");
-assert.ok(emotion.includes('data-no-swipe="true"'), "备注输入区不应触发页面滑动");
-
 const aiChat = read("miniprogram/pages/chat/chat.wxml");
 assert.ok(aiChat.includes("麦克风正常"));
 assert.ok(aiChat.includes("扬声器正常"));

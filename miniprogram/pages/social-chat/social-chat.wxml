@@ -1,12 +1,17 @@
 <view class="chat-page">
   <view class="partner-strip">
-    <image wx:if="{{profile.avatarType === 'custom'}}" class="partner-avatar" src="{{profile.avatarValue}}" mode="aspectFill" />
-    <view wx:else class="partner-avatar virtual-avatar" style="background: {{profile.avatarColor}}">{{profile.avatarValue}}</view>
+  <image wx:if="{{profile.avatarType === 'custom' && profile.avatarDisplayUrl && !partnerAvatarFailed}}" class="partner-avatar" src="{{profile.avatarDisplayUrl}}" mode="aspectFill" binderror="handlePartnerAvatarError" />
+    <view wx:else class="partner-avatar virtual-avatar" style="background: {{profile.avatarColor}}">{{profile.avatarType === 'custom' ? profile.avatarFallback : profile.avatarValue}}</view>
     <view class="partner-copy">
-      <text class="partner-name">{{profile.nickname}}</text>
-      <text class="privacy-tip">只有已互相确认的伙伴可以发送消息</text>
+      <view class="partner-title-row">
+        <text class="partner-name">{{profile.nickname}}</text>
+        <view class="relationship-badge"><view class="relationship-dot"></view><text>已认识</text></view>
+      </view>
+      <text class="privacy-tip">你们已互相确认，可以直接聊天</text>
     </view>
-    <button class="safety-menu" bindtap="openSafetyMenu">•••</button>
+    <view class="safety-menu" role="button" aria-label="更多聊天设置" hover-class="safety-menu-pressed" bindtap="openSafetyMenu">
+      <view class="menu-dot"></view><view class="menu-dot"></view><view class="menu-dot"></view>
+    </view>
   </view>
 
   <view wx:if="{{profile.isSoloTest}}" class="solo-test-bar">

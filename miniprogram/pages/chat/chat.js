@@ -27,6 +27,7 @@ Page({
   },
 
   onLoad() {
+    this._pageActive = true;
     this._hardwareVoiceQueue = [];
     this._unsubscribeHardwareVoiceState = deviceAudioService.subscribe(state => {
       if (this._pageUnloaded) return;
@@ -63,11 +64,28 @@ Page({
     this.loadMessages();
   },
 
+  onShow() {
+    this._pageActive = true;
+    this.processHardwareVoiceQueue();
+  },
+
   onHide() {
+    this._pageActive = false;
     this.stopVoiceRecognition(true);
+    if (this._processingHardwareVoice) {
+      this.setData({ recognizing: false });
+      if (this._activeHardwareRecording && typeof deviceAudioService.cancelRecognition === "function") {
+        deviceAudioService.cancelRecognition(this._activeHardwareRecording.sessionId, "聊天页面已隐藏");
+      }
+      if (this.data.generating) this.stopGeneration();
+      if (typeof deviceTtsService.cancel === "function") {
+        deviceTtsService.cancel("聊天页面已隐藏").catch(() => {});
+      }
+    }
   },
 
   onUnload() {
+    this._pageActive = false;
     this._pageUnloaded = true;
     if (this._activeChatRequest && typeof this._activeChatRequest.abort === "function") {
       this._activeChatRequest.abort();
@@ -193,11 +211,14 @@ Page({
       return;
     }
     this._hardwareVoiceQueue.push(recording);
+    if (!this._pageActive && typeof deviceAudioService.cancelRecognition === "function") {
+      deviceAudioService.cancelRecognition(recording.sessionId, "聊天页面当前不可见");
+    }
     this.processHardwareVoiceQueue();
   },
 
   async processHardwareVoiceQueue() {
-    if (this._processingHardwareVoice || this._pageUnloaded) return;
+    if (this._processingHardwareVoice || this._pageUnloaded || !this._pageActive) return;
     if (!this._hardwareVoiceQueue || !this._hardwareVoiceQueue.length) return;
     if (this.data.generating || this.data.speaking || this.data.listening || this.data.recognizing || this.data.loading) return;
 
@@ -215,6 +236,7 @@ Page({
       bleEncodedBytes: timing.encodedBytes || 0
     };
     this._processingHardwareVoice = true;
+    this._activeHardwareRecording = recording;
     this.setData({ recognizing: true });
     try {
       const asrStartedAt = Date.now();
@@ -228,6 +250,7 @@ Page({
           console.warn("实时语音识别失败，改用完整录音识别：", realtimeError.message);
         }
       }
+      if (!this._pageActive || this._pageUnloaded) return;
       if (!response) {
         response = await chatService.transcribeAudio(
           recording.filePath,
@@ -237,7 +260,7 @@ Page({
         voiceTrace.asrMode = "sentence-fallback";
       }
       voiceTrace.asrMs = Date.now() - asrStartedAt;
-      if (this._pageUnloaded) return;
+      if (!this._pageActive || this._pageUnloaded) return;
       const content = response.data && typeof response.data.text === "string"
         ? response.data.text.trim()
         : "";
@@ -246,7 +269,7 @@ Page({
       this.setData({ recognizing: false, inputValue: "" });
       await this.sendMessage(content, voiceTrace);
     } catch (error) {
-      if (!this._pageUnloaded) {
+      if (!this._pageUnloaded && this._pageActive) {
         console.error("挂件语音转文字失败：", error);
         this.setData({ recognizing: false });
         wx.showToast({
@@ -258,8 +281,9 @@ Page({
     } finally {
       deviceAudioService.removeFile(recording.filePath);
       deviceAudioService.markReady();
+      this._activeHardwareRecording = null;
       this._processingHardwareVoice = false;
-      if (!this._pageUnloaded) this.processHardwareVoiceQueue();
+      if (!this._pageUnloaded && this._pageActive) this.processHardwareVoiceQueue();
     }
   },
 
@@ -475,12 +499,14 @@ Page({
       try {
         await this.playReplySpeech(result.data.reply, voiceTrace);
       } catch (speechError) {
-        console.error("挂件朗读失败：", speechError);
-        wx.showToast({
-          title: speechError.message || "文字回复成功，但朗读失败",
-          icon: "none",
-          duration: 2800
-        });
+        if (!speechError.cancelled && this._pageActive) {
+          console.error("挂件朗读失败：", speechError);
+          wx.showToast({
+            title: speechError.message || "文字回复成功，但朗读失败",
+            icon: "none",
+            duration: 2800
+          });
+        }
       } finally {
         if (voiceTrace && this._activeVoiceTrace === voiceTrace) this._activeVoiceTrace = null;
         if (!this._pageUnloaded) this.setData({ speaking: false });
@@ -506,7 +532,7 @@ Page({
         userMessages.slice(0, -1),
         {
           onSegment: segment => {
-            if (this._pageUnloaded) return;
+            if (this._pageUnloaded || !this._pageActive) return;
             partialReply += segment;
             if (!firstSegmentReceived) {
               firstSegmentReceived = true;
@@ -569,12 +595,14 @@ Page({
         try {
           await speechQueue.finish();
         } catch (speechError) {
-          console.error("流式挂件朗读失败：", speechError);
-          wx.showToast({
-            title: speechError.message || "文字回复成功，但朗读失败",
-            icon: "none",
-            duration: 2800
-          });
+          if (!speechError.cancelled && this._pageActive) {
+            console.error("流式挂件朗读失败：", speechError);
+            wx.showToast({
+              title: speechError.message || "文字回复成功，但朗读失败",
+              icon: "none",
+              duration: 2800
+            });
+          }
         } finally {
           if (voiceTrace && this._activeVoiceTrace === voiceTrace) this._activeVoiceTrace = null;
         }
@@ -617,6 +645,7 @@ Page({
   },
 
   async playReplySpeech(text, voiceTrace) {
+    if (!this._pageActive) return;
     const segments = chatService.splitSpeechText(text);
     if (!segments.length) throw new Error("没有可朗读的回复");
 
@@ -628,6 +657,7 @@ Page({
 
     const first = await firstPromise;
     if (first.error) throw first.error;
+    if (!this._pageActive) return;
     // 第一段优先独占云端合成；拿到首段后，再让后续合成与 BLE 下发、播放并行。
     const remainingPromise = segments.length > 1
       ? chatService.synthesizeSpeechBatch(segments.slice(1)).then(
@@ -642,7 +672,7 @@ Page({
     }
     await deviceTtsService.play(first.result.data);
 
-    if (remainingPromise) {
+    if (remainingPromise && this._pageActive) {
       const remaining = await remainingPromise;
       if (remaining.error) throw remaining.error;
       const audioSegments = remaining.result.data && remaining.result.data.segments;
@@ -650,6 +680,7 @@ Page({
         throw new Error("后续语音生成结果不完整");
       }
       for (let index = 0; index < audioSegments.length; index += 1) {
+        if (!this._pageActive) return;
         await deviceTtsService.play(audioSegments[index]);
       }
     }

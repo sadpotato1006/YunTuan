@@ -205,6 +205,8 @@ function profile(nickname, overrides) {
   assert.strictEqual(resolvedB.code, 0);
   assert.strictEqual(resolvedB.data.profile.nickname, "小团");
   assert.strictEqual(resolvedB.data.profile.avatarValue, avatarFileId);
+  assert.match(resolvedB.data.peerKey, /^[a-f0-9]{64}$/);
+  assert.strictEqual(resolvedB.data.alreadyKnown, false);
   assert.match(resolvedB.data.interactionRef, /^[a-f0-9]{48}$/);
   assert.ok(!JSON.stringify(resolvedB.data.profile).includes("138-0000-0000"));
   assert.ok(!("ownerKey" in resolvedB.data.profile));
@@ -253,6 +255,12 @@ function profile(nickname, overrides) {
   assert.strictEqual(matchedInboxA.data.matches[0].profile.nickname, "小团");
   assert.strictEqual(matchedInboxA.data.matches[0].newMatch, true, "招呼发起方应看到对方已接受");
   assert.strictEqual(matchedInboxA.data.matches[0].conversationId, conversationId);
+
+  const resolvedKnownB = await socialFunction.main({ action: "resolveToken", token: tokenB });
+  assert.strictEqual(resolvedKnownB.code, 0);
+  assert.strictEqual(resolvedKnownB.data.alreadyKnown, true);
+  assert.strictEqual(resolvedKnownB.data.peerKey, resolvedB.data.peerKey);
+  assert.strictEqual(resolvedKnownB.data.interactionRef, "", "已经认识后不再签发招呼凭证");
 
   const openedA = await socialFunction.main({ action: "getConversation", conversationId });
   assert.strictEqual(openedA.code, 0);

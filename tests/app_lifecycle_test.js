@@ -2,7 +2,7 @@ const assert = require("assert");
 
 const config = require("../miniprogram/config/index");
 config.backendMode = "cloud";
-config.serviceBackendModes = { chat: "cloud", device: "ble", emotion: "cloud" };
+config.serviceBackendModes = { chat: "cloud", device: "ble" };
 
 const originalApp = global.App;
 const originalWx = global.wx;
@@ -11,11 +11,13 @@ const originalClearTimeout = global.clearTimeout;
 const timers = new Set();
 let appDefinition = null;
 let cloudInitOptions = null;
+const shownRedDots = [];
+const hiddenRedDots = [];
 
 global.wx = {
   cloud: { init(options) { cloudInitOptions = options; } },
-  showTabBarRedDot() {},
-  hideTabBarRedDot() {}
+  showTabBarRedDot(options) { shownRedDots.push(options.index); },
+  hideTabBarRedDot(options) { hiddenRedDots.push(options.index); }
 };
 global.App = definition => { appDefinition = definition; };
 global.setTimeout = callback => {
@@ -34,6 +36,10 @@ try {
   assert.strictEqual(appDefinition._socialBadgePollingActive, true);
   assert.ok(appDefinition._socialBadgeTimer);
   assert.strictEqual(timers.has(appDefinition._socialBadgeTimer), true);
+  appDefinition.setSocialBadgeCount(1);
+  appDefinition.setSocialBadgeCount(0);
+  assert.deepStrictEqual(shownRedDots, [1]);
+  assert.deepStrictEqual(hiddenRedDots, [1]);
 
   appDefinition.onHide();
   assert.strictEqual(appDefinition._socialBadgePollingActive, false);

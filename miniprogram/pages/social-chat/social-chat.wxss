@@ -1,13 +1,17 @@
 page { height: 100%; overflow: hidden; background: #f3f5f1; }
 .chat-page { display: flex; height: 100vh; flex-direction: column; box-sizing: border-box; }
-.partner-strip { display: flex; align-items: center; gap: 18rpx; padding: 18rpx 28rpx; background: rgba(255, 255, 255, .94); border-bottom: 1rpx solid #e9eeea; }
-.partner-avatar { width: 68rpx; height: 68rpx; flex: 0 0 68rpx; border-radius: 50%; }
-.virtual-avatar { display: flex; align-items: center; justify-content: center; font-size: 31rpx; }
+.partner-strip { display: flex; align-items: center; gap: 18rpx; min-height: 116rpx; padding: 18rpx 24rpx; box-sizing: border-box; background: #fff; border-bottom: 1rpx solid #e5ebe7; }
+.partner-avatar { width: 80rpx; height: 80rpx; flex: 0 0 80rpx; box-sizing: border-box; border: 3rpx solid rgba(255, 255, 255, .9); border-radius: 50%; background: #e9efeb; box-shadow: 0 4rpx 14rpx rgba(49, 73, 64, .11); }
+.virtual-avatar { display: flex; align-items: center; justify-content: center; color: #41675e; font-size: 32rpx; font-weight: 650; }
 .partner-copy { flex: 1; min-width: 0; }
-.partner-name { display: block; font-size: 28rpx; font-weight: 650; }
-.privacy-tip { display: block; margin-top: 4rpx; color: #89938f; font-size: 20rpx; }
-.safety-menu { width: 68rpx; min-width: 68rpx; min-height: 60rpx; margin: 0; padding: 0; border-radius: 18rpx; background: #f0f3f1 !important; color: #52796f !important; font-size: 26rpx; line-height: 60rpx; }
-.safety-menu::after { border: 0; }
+.partner-title-row { display: flex; min-width: 0; align-items: center; gap: 12rpx; }
+.partner-name { display: block; overflow: hidden; min-width: 0; color: #293a35; font-size: 30rpx; font-weight: 650; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.relationship-badge { display: flex; flex: 0 0 auto; align-items: center; gap: 7rpx; padding: 5rpx 10rpx; border-radius: 999rpx; background: #edf5f0; color: #52796f; font-size: 18rpx; line-height: 1; }
+.relationship-dot { width: 8rpx; height: 8rpx; flex: 0 0 8rpx; border-radius: 50%; background: #6d9a88; }
+.privacy-tip { display: block; overflow: hidden; margin-top: 8rpx; color: #84918c; font-size: 21rpx; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.safety-menu { display: flex; width: 64rpx; height: 64rpx; flex: 0 0 64rpx; align-items: center; justify-content: center; gap: 6rpx; box-sizing: border-box; border: 1rpx solid #e2e9e5; border-radius: 50%; background: #f4f7f5; transition: transform 140ms cubic-bezier(.23, 1, .32, 1), background-color 140ms ease; }
+.safety-menu-pressed { background: #e8efeb; transform: scale(.94); }
+.menu-dot { width: 7rpx; height: 7rpx; flex: 0 0 7rpx; border-radius: 50%; background: #5d7f75; }
 .solo-test-bar { display: flex; align-items: center; justify-content: space-between; gap: 18rpx; padding: 16rpx 26rpx; background: #fff8e8; border-bottom: 1rpx solid #ecdfbf; }
 .solo-test-title { display: block; color: #6f5726; font-size: 24rpx; font-weight: 650; }
 .solo-test-tip { display: block; margin-top: 4rpx; color: #89764d; font-size: 19rpx; }

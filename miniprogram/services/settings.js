@@ -1,16 +1,15 @@
 const STORAGE_KEY = "yuntuan_settings";
 const DEFAULT_SETTINGS = Object.freeze({
-  socialReminder: true,
-  vibration: true,
-  sound: true
+  vibration: true
 });
 
 function normalizeSettings(value) {
   const source = value && typeof value === "object" ? value : {};
   return {
-    socialReminder: source.socialReminder !== false,
+    // 保留三字节 BLE 设置协议，产品层统一为“社交事件只使用震动反馈”。
+    socialReminder: true,
     vibration: source.vibration !== false,
-    sound: source.sound !== false
+    sound: false
   };
 }
 
@@ -31,8 +30,6 @@ function saveSettings(value) {
 
 function getAlertType(value) {
   const settings = normalizeSettings(value);
-  if (settings.vibration && settings.sound) return 2;
-  if (settings.sound) return 1;
   if (settings.vibration) return 0;
   return 3;
 }

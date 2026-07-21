@@ -3,15 +3,6 @@
   "environmentId": "cloudbase-d7g2y0azb4f5dcf00",
   "indexes": [
     {
-      "collection": "emotion_records",
-      "name": "idx_emotion_owner_day",
-      "unique": false,
-      "fields": [
-        { "field": "ownerKey", "order": "asc" },
-        { "field": "dayKey", "order": "desc" }
-      ]
-    },
-    {
       "collection": "social_messages",
       "name": "idx_messages_conversation_created",
       "unique": false,
