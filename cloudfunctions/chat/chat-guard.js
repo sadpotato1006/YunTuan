@@ -82,6 +82,7 @@ module.exports = {
   MAX_MESSAGE_CHARACTERS,
   MAX_CONTEXT_MESSAGES,
   MAX_CONTEXT_CHARACTERS,
+  MAX_REPLY_CHARACTERS,
   PublicError,
   buildConversation,
   countCharacters,

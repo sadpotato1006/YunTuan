@@ -49,6 +49,7 @@ function buildConversation(history, currentMessage) {
     });
   });
 
+  // 页面通常传入“发送前”的历史；如果调用方误把当前消息也带上，避免重复喂给模型。
   const last = normalized[normalized.length - 1];
   if (last && last.role === "user" && last.content === currentMessage) normalized.pop();
 
@@ -78,6 +79,9 @@ function getShanghaiDayKey(timestamp) {
 }
 
 module.exports = {
+  MAX_MESSAGE_CHARACTERS,
+  MAX_CONTEXT_MESSAGES,
+  MAX_CONTEXT_CHARACTERS,
   MAX_REPLY_CHARACTERS,
   PublicError,
   buildConversation,

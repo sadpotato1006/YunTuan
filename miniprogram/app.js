@@ -7,11 +7,6 @@ App({
     if (!config.usesCloudBackend()) return;
     this._socialBadgePollingActive = true;
 
-    if (!config.cloudEnvId) {
-      console.warn("云开发环境 ID 未填写，云函数暂不可用");
-      return;
-    }
-
     if (!wx.cloud || typeof wx.cloud.init !== "function") {
       console.error("当前基础库不支持微信云开发，请升级基础库版本");
       return;
@@ -21,7 +16,9 @@ App({
     if (this.globalData.cloudInitialized) return;
 
     try {
-      wx.cloud.init({ env: config.cloudEnvId, traceUser: true });
+      const cloudOptions = { traceUser: true };
+      if (config.cloudEnvId) cloudOptions.env = config.cloudEnvId;
+      wx.cloud.init(cloudOptions);
       this.globalData.cloudInitialized = true;
     } catch (error) {
       this.globalData.cloudInitialized = false;
@@ -32,6 +29,7 @@ App({
   onShow() {
     this.stopSocialBadgePolling();
     if (!config.usesCloudBackend()) return;
+    this._socialBadgePollingActive = true;
     this._socialBadgeIdleRounds = 0;
     this._socialBadgeSignature = "";
     this.scheduleSocialBadgeRefresh(1200);

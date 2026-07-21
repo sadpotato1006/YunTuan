@@ -82,9 +82,11 @@ const cloudStub = {
   }
 };
 
+let aiFailure = null;
 const axiosStub = {
   async post(url, data) {
     aiRequests.push({ url, data: clone(data) });
+    if (aiFailure) throw aiFailure;
     return { data: { choices: [{ message: { content: "我记得，您昨天去散步了。" } }] } };
   }
 };
@@ -185,6 +187,28 @@ Module._load = originalLoad;
   assert.strictEqual(quotaFirst.code, 0);
   assert.strictEqual(quotaSecond.code, 429);
   assert.strictEqual(aiRequests.length, 2);
+
+  currentOpenid = "openid-log-safety";
+  process.env.CHAT_DAILY_CHAT_QUOTA = "10";
+  aiFailure = Object.assign(new Error("upstream failed"), {
+    response: {
+      status: 502,
+      headers: { "x-request-id": "safe-request-id" },
+      data: { code: "UPSTREAM_BUSY", prompt: "private-user-content" }
+    }
+  });
+  const originalConsoleError = console.error;
+  const errorLogs = [];
+  console.error = (...args) => errorLogs.push(args);
+  const failed = await chatFunction.main({
+    requestId: "chat_log_safety_006",
+    message: "这段内容不应进入错误日志"
+  });
+  console.error = originalConsoleError;
+  aiFailure = null;
+  assert.strictEqual(failed.code, 500);
+  assert.ok(JSON.stringify(errorLogs).includes("safe-request-id"));
+  assert.ok(!JSON.stringify(errorLogs).includes("private-user-content"));
 
   currentOpenid = "openid-user-4";
   process.env.CHAT_DAILY_TTS_QUOTA = "10";

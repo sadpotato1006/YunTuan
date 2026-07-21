@@ -6,16 +6,17 @@
 
 ## 后端模式
 
-在 `miniprogram/config/index.js` 中修改 `backendMode`：
+`miniprogram/config/index.js` 会根据微信小程序的 `envVersion` 自动选择
+`miniprogram/config/profiles.js` 中的 `develop`、`trial` 或 `release` 配置：
 
-- `mock`：本地 Promise 模拟数据，无需网络、服务器或云开发环境，当前默认模式，适合界面和交互开发。
+- `mock`：本地 Promise 模拟数据，无需网络、服务器或云开发环境，适合界面和交互开发。
 - `cloud`：由 `wx.cloud.callFunction` 调用微信云函数，适合承载 AI 调用、云数据库和设备绑定数据。
 - `http`：由统一封装的 `wx.request` 调用自建服务器，未来可连接 Node.js、Python 或 Java 后端。
 - `ble`：仅供设备业务使用，由手机直接连接附近的云团 BLE 挂件。
 
 页面只调用 `services`，切换模式不需要修改页面。
 
-也可以通过 `serviceBackendModes` 为不同业务单独指定模式。当前项目的聊天和心情记录调用云函数，设备使用本机 BLE：
+也可以在各环境配置的 `serviceBackendModes` 中为不同业务单独指定模式。当前三个环境默认均由聊天和心情记录调用云函数，设备使用本机 BLE：
 
 ```js
 serviceBackendModes: {
@@ -29,11 +30,11 @@ serviceBackendModes: {
 
 ## 使用 Mock 模式
 
-保持以下配置即可直接编译运行：
+在 `profiles.js` 对应环境中使用以下配置即可直接以 Mock 运行：
 
 ```js
 backendMode: "mock",
-cloudEnvId: ""
+serviceBackendModes: { chat: "mock", device: "ble", emotion: "mock" }
 ```
 
 Mock 模式不会初始化或调用 `wx.cloud`，因此无需创建云环境。设备页的“设备详细信息”入口集中提供设备版本、连接管理、模拟挂件和 BLE 联调，可以在没有真实硬件时验证 BLE 1.7 控制协议。模拟挂件只声明其实际提供的控制、相遇和提醒能力，不伪装音频服务。
@@ -41,8 +42,8 @@ Mock 模式不会初始化或调用 `wx.cloud`，因此无需创建云环境。�
 ## 使用微信云开发
 
 1. 在微信开发者工具中打开“云开发”，按提示创建环境。
-2. 在云开发控制台或开发者工具中复制环境 ID。
-3. 将环境 ID 填入 `miniprogram/config/index.js` 的 `cloudEnvId`，并把 `backendMode` 改为 `cloud`。
+2. 在云开发控制台确认当前小程序关联的默认环境。
+3. 在控制台把当前小程序 AppID 关联到 `miniprogram/config/profiles.js` 中固定配置的云环境 `cloudbase-d7g2y0azb4f5dcf00`。三个 `envVersion` 当前统一使用该环境；以后需要隔离体验版或正式版数据时，再分别修改对应 profile。
 4. 在开发者工具的 `cloudfunctions` 目录中，依次右键 `chat`、`device`、`emotion`、`social`、`social-cleanup`。
 5. 选择“上传并部署：云端安装依赖”。
 6. 重新编译小程序。
@@ -86,7 +87,7 @@ tcb fn deploy chat-stream --httpFn
 
 ### 情绪记录云存储
 
-情绪功能使用 `emotion` 云函数，并按不可逆哈希后的微信 `OPENID` 隔离数据。部署前需在云开发数据库中创建 `emotion_records` 集合，将权限设为仅云函数可读写，然后重新部署 `emotion` 云函数。新用户默认没有记录；同一用户每天只保留一条，再次选择会更新当天记录。用户可填写最多 100 个字符的可选备注；点击输入框时会自动清空所选心情的默认语句，最终留空则仍保存并展示默认语句。页面最多返回最近 30 条。
+情绪功能使用 `emotion` 云函数，并按不可逆哈希后的微信 `OPENID` 隔离数据。部署前需在云开发数据库中创建 `emotion_records` 集合，将权限设为仅云函数可读写，并创建非唯一组合索引 `idx_emotion_owner_day`：`ownerKey` 升序、`dayKey` 降序，然后重新部署 `emotion` 云函数。仓库中的 `database/required-indexes.json` 是关键组合索引的固定清单，部署或切换环境时应逐项核对。新用户默认没有记录；同一用户每天只保留一条，再次选择会更新当天记录。用户可填写最多 100 个字符的可选备注；点击输入框时会自动清空所选心情的默认语句，最终留空则仍保存并展示默认语句。云函数直接按日期倒序返回最近 30 条，不再先读取无序历史记录。
 
 ### 社交名片与相遇展示
 
@@ -139,7 +140,7 @@ tcb fn deploy chat-stream --httpFn
 | `social_contact_files` | `idx_contact_files_expires` | 单字段索引 | `expiresAt` |
 | `social_conversations` | `idx_conversations_status_updated` | 组合索引 | `status`（升序）、`updatedAt`（升序） |
 
-伙伴页的朋友和待处理招呼分别按 `inboxSortKey` 倒序分页，每页默认 20 条；旧记录首次读取时会自动补齐排序字段。前台刷新采用自适应间隔：聊天页从 5 秒逐步放慢到 30 秒，伙伴页从 15 秒逐步放慢到 60 秒；全局伙伴红点从 30 秒逐步放慢到 2 分钟、5 分钟。检测到新消息或用户主动发送后恢复最快间隔，小程序进入后台后停止刷新。
+伙伴页的朋友和待处理招呼分别按 `inboxSortKey` 倒序分页，每页默认 20 条；旧记录首次读取时会自动补齐排序字段。伙伴聊天首次进入读取最新一页，向上翻页使用 `beforeCreatedAt`；后续轮询使用 `afterCreatedAt`，只读取最后一条本地消息之后的新增内容。前台刷新采用自适应间隔：聊天页从 5 秒逐步放慢到 30 秒，伙伴页从 15 秒逐步放慢到 60 秒；全局伙伴红点从 30 秒逐步放慢到 2 分钟、5 分钟。检测到新消息或用户主动发送后恢复最快间隔，小程序进入后台后停止刷新。
 
 联系方式分享使用稳定请求编号保证幂等：同一次请求因网络超时重试时不会重复写入或重复提醒。新上传的二维码先在 `social_contact_files` 中登记为临时文件，正式分享后转为已分享状态；未完成分享的临时文件在 24 小时后过期，并在下次进入联系方式页面或再次准备分享时自动清理。
 
@@ -197,7 +198,7 @@ node tests\ble_simulator_test.js
 
 模拟器还支持电量、设备信息、社交模式、查找挂件、Ping 和提醒设置。RSSI 距离准确性、真实扫描广播、振动/声音效果、物理按键、BLE 丢包/重连、录音播放和功耗仍必须等真实硬件到手后验证。
 
-固件 `0.8.0` 使用 GPIO1 读取 100k/100k 分压后的真实锂电池电压，并通过放电曲线换算百分比；录音和扬声器播放期间暂停采样，避免瞬时压降造成跳变。TP4056 的 CHRG、STDBY 分别并接 GPIO9、GPIO10 后，充电状态会通过 BLE 同步到小程序；充电期间挂件状态灯保持常亮，充满后小程序显示“已充满”。具体接线见 `docs/esp32_voice_device_design.md`。
+固件 `0.8.0` 使用 GPIO1 读取 100k/100k 分压后的真实锂电池电压，并通过放电曲线换算大致百分比；录音和扬声器播放期间暂停采样，避免瞬时压降造成跳变。硬件只需增加两个 100kΩ 分压电阻，不读取 TP4056 的 CHRG/STDBY，也不在小程序显示充电状态；是否正在充电继续由 TP4056 小板自带指示灯提示。具体接线见 `docs/esp32_voice_device_design.md`。
 
 可以通过以下云函数环境变量调整保护阈值：
 
@@ -215,7 +216,10 @@ node tests\ble_simulator_test.js
 ```powershell
 node tests\chat_guard_test.js
 node tests\chat_stream_test.js
+node scripts\sync-chat-shared.js --check
 ```
+
+`cloudfunctions/chat` 中的 `chat-guard.js` 和 `chat-idempotency.js` 是普通与流式聊天共用逻辑的规范源。由于微信云函数按目录独立部署，`chat-stream` 保留部署内副本；修改规范源后运行 `node scripts\sync-chat-shared.js` 同步，测试会阻止两个副本发生漂移。
 
 ## 使用自建服务器
 

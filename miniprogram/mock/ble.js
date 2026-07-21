@@ -7,13 +7,11 @@ const SIMULATOR_CAPABILITIES = config.capabilities.battery |
   config.capabilities.socialMode |
   config.capabilities.findDevice |
   config.capabilities.buttonEvent |
-  config.capabilities.chargingState |
   config.capabilities.timeSync |
   config.capabilities.socialEncounter |
   config.capabilities.alertSettings;
 const startedAt = Date.now();
 let battery = 78;
-let chargingState = 1;
 let socialMode = true;
 let alertSettings = { socialReminder: true, vibration: true, sound: true };
 let memorySocialToken = 0;
@@ -150,7 +148,7 @@ function createNotifyValue(characteristicId) {
   if (same(characteristicId, UUIDS.eventTx)) {
     return protocol.createEvent(
       config.COMMANDS.STATUS_CHANGED,
-      new Uint8Array([battery, chargingState, socialMode ? 1 : 0])
+      new Uint8Array([battery, 0xFF, socialMode ? 1 : 0])
     );
   }
   return readValue(characteristicId);
@@ -235,7 +233,7 @@ function protocolInfoBytes() {
 function createStatusData() {
   const data = new Uint8Array(7);
   data[0] = battery;
-  data[1] = chargingState;
+  data[1] = 0xFF;
   data[2] = socialMode ? 1 : 0;
   protocol.writeUint32LE(data, 3, Math.floor((Date.now() - startedAt) / 1000));
   return data;

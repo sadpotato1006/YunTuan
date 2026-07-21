@@ -3,6 +3,8 @@ const deviceAudioService = require("../../services/yuntuan-audio");
 const deviceTtsService = require("../../services/yuntuan-tts");
 const diagnostics = require("../../services/diagnostics");
 const { buildVoiceLatencyMetrics } = require("./voice-latency");
+const { createStreamReplyRenderer } = require("./stream-reply-renderer");
+const { createStreamingSpeechQueue } = require("./streaming-speech-queue");
 
 Page({
   data: {
@@ -16,9 +18,12 @@ Page({
     loading: true,
     hardwareVoiceSupported: false,
     hardwareVoiceActive: false,
-    hardwareVoiceText: "请先在设备页连接云团挂件",
+    hardwareVoiceReady: false,
+    hardwareVoiceHasError: false,
     hardwarePlaybackSupported: false,
-    hardwarePlaybackText: "挂件朗读尚未连接"
+    hardwarePlaybackActive: false,
+    hardwarePlaybackReady: false,
+    hardwarePlaybackHasError: false
   },
 
   onLoad() {
@@ -26,11 +31,12 @@ Page({
     this._unsubscribeHardwareVoiceState = deviceAudioService.subscribe(state => {
       if (this._pageUnloaded) return;
       const active = state.phase === "recording" || state.phase === "receiving" || state.phase === "decoding";
-      const text = state.errorMessage || state.statusText;
+      const hasError = Boolean(state.errorMessage) || state.phase === "error";
       this.setData({
         hardwareVoiceSupported: state.supported,
         hardwareVoiceActive: active,
-        hardwareVoiceText: text
+        hardwareVoiceReady: state.attached === true && !hasError,
+        hardwareVoiceHasError: hasError
       });
     });
     this._unsubscribeHardwareVoiceCompleted = deviceAudioService.subscribeCompleted(recording => {
@@ -47,8 +53,10 @@ Page({
       }
       this.setData({
         hardwarePlaybackSupported: state.supported,
-        speaking: active || betweenSegments,
-        hardwarePlaybackText: state.errorMessage || state.statusText
+        hardwarePlaybackActive: active || betweenSegments,
+        hardwarePlaybackReady: state.attached === true && !state.errorMessage,
+        hardwarePlaybackHasError: Boolean(state.errorMessage) || state.phase === "error",
+        speaking: active || betweenSegments
       });
     });
     this.initVoiceRecorder();
@@ -207,7 +215,7 @@ Page({
       bleEncodedBytes: timing.encodedBytes || 0
     };
     this._processingHardwareVoice = true;
-    this.setData({ recognizing: true, hardwareVoiceText: "录音已接收，正在识别…" });
+    this.setData({ recognizing: true });
     try {
       const asrStartedAt = Date.now();
       let response;
@@ -235,7 +243,7 @@ Page({
         : "";
       if (!content) throw new Error("没有听清，请再说一次");
 
-      this.setData({ recognizing: false, inputValue: "", hardwareVoiceText: "识别完成，正在生成回复…" });
+      this.setData({ recognizing: false, inputValue: "" });
       await this.sendMessage(content, voiceTrace);
     } catch (error) {
       if (!this._pageUnloaded) {
@@ -396,10 +404,7 @@ Page({
           if (!streamError.canFallback || streamError.partialReply) throw streamError;
           console.warn("流式聊天不可用，自动切换普通聊天：", streamError.message);
           if (!this._pageUnloaded) {
-            this.setData({
-              thinking: true,
-              hardwarePlaybackText: voiceTrace ? "流式服务不可用，正在用普通模式回复…" : this.data.hardwarePlaybackText
-            });
+            this.setData({ thinking: true });
           }
         }
       }
@@ -465,8 +470,7 @@ Page({
     if (deviceTtsService.getState().attached) {
       this.setData({
         thinking: false,
-        speaking: true,
-        hardwarePlaybackText: "正在生成云团语音…"
+        speaking: true
       });
       try {
         await this.playReplySpeech(result.data.reply, voiceTrace);
@@ -487,10 +491,14 @@ Page({
   async receiveStreamingReply(content, userMessages, voiceTrace, replyStartedAt, userId, requestId) {
     const replyId = `ai-stream-${Date.now()}`;
     const speechQueue = deviceTtsService.getState().attached
-      ? this.createStreamingSpeechQueue(voiceTrace)
+      ? createStreamingSpeechQueue(this, chatService, deviceTtsService, voiceTrace)
       : null;
     let partialReply = "";
     let firstSegmentReceived = false;
+    const replyRenderer = createStreamReplyRenderer(this, {
+      onPersist: messages => chatService.scheduleSaveMessages(messages),
+      onRendered: () => this.scrollToBottom()
+    });
 
     try {
       const operation = chatService.streamMessage(
@@ -504,24 +512,22 @@ Page({
               firstSegmentReceived = true;
               if (voiceTrace) voiceTrace.aiAndNetworkMs = Date.now() - replyStartedAt;
             }
-            const replyMessages = userMessages.concat({
+            const reply = {
               id: replyId,
               role: "assistant",
               content: partialReply,
               replyTo: userId,
               status: "streaming"
+            };
+            replyRenderer.schedule({
+              baseMessages: userMessages,
+              reply,
+              uiState: {
+                // 未连接挂件时继续用 thinking 锁住输入，直到完整流结束，避免消息并发乱序。
+                thinking: !speechQueue,
+                speaking: Boolean(speechQueue)
+              }
             });
-            this.setData({
-              messages: replyMessages,
-              // 未连接挂件时继续用 thinking 锁住输入，直到完整流结束，避免消息并发乱序。
-              thinking: !speechQueue,
-              speaking: Boolean(speechQueue),
-              hardwarePlaybackText: speechQueue
-                ? "已收到首段，正在生成云团语音…"
-                : this.data.hardwarePlaybackText
-            });
-            chatService.scheduleSaveMessages(replyMessages);
-            this.scrollToBottom();
             if (speechQueue) speechQueue.enqueue(segment);
           }
         },
@@ -541,6 +547,7 @@ Page({
       }
       const finalReply = result.data && result.data.reply;
       if (!finalReply) throw new Error("AI 没有返回有效回复");
+      replyRenderer.flush();
 
       const sentMessages = userMessages.map(item => item.id === userId
         ? Object.assign({}, item, { status: "sent", errorMessage: "" })
@@ -574,6 +581,7 @@ Page({
       }
       return result;
     } catch (error) {
+      replyRenderer.flush();
       error.partialReply = error.partialReply || partialReply;
       if (speechQueue && partialReply) {
         try {
@@ -583,6 +591,8 @@ Page({
         }
       }
       throw error;
+    } finally {
+      replyRenderer.cancel();
     }
   },
 
@@ -604,78 +614,6 @@ Page({
       userMessageId: item.id,
       requestId: item.requestId || chatService.createRequestId()
     });
-  },
-
-  createStreamingSpeechQueue(voiceTrace) {
-    const maximumCharacters = 150;
-    const maximumSegments = 4;
-    let queuedCharacters = 0;
-    let segmentNumber = 0;
-    let synthesisChain = Promise.resolve();
-    let playbackChain = Promise.resolve();
-    let firstError = null;
-    let firstSpeechReady = false;
-
-    return {
-      enqueue: text => {
-        const available = maximumCharacters - queuedCharacters;
-        if (available <= 0 || segmentNumber >= maximumSegments) return;
-        const speechText = Array.from(typeof text === "string" ? text : "")
-          .slice(0, available)
-          .join("")
-          .trim();
-        if (!speechText) return;
-
-        queuedCharacters += Array.from(speechText).length;
-        segmentNumber += 1;
-        const currentSegment = segmentNumber;
-        const synthesisStartedAt = Date.now();
-        // TTS 云调用保持单并发，仍可与上一段 BLE 播放并行，避免同一用户用量事务互相冲突。
-        const prepared = synthesisChain.then(() => chatService.synthesizeSpeech(speechText)).then(
-          result => ({ result }),
-          error => ({ error })
-        );
-        synthesisChain = prepared.then(() => undefined);
-
-        playbackChain = playbackChain.then(async () => {
-          const synthesized = await prepared;
-          if (synthesized.error) {
-            if (!firstError) firstError = synthesized.error;
-            console.warn(`第 ${currentSegment} 段语音合成失败，继续处理后续语音：`, synthesized.error.message);
-            return;
-          }
-          if (!firstSpeechReady && voiceTrace) {
-            firstSpeechReady = true;
-            voiceTrace.firstSpeechReadyAt = Date.now();
-            voiceTrace.firstSpeechSynthesisMs = voiceTrace.firstSpeechReadyAt - synthesisStartedAt;
-            this._activeVoiceTrace = voiceTrace;
-          }
-          if (!this._pageUnloaded) {
-            this.setData({
-              speaking: true,
-              hardwarePlaybackText: currentSegment === 1
-                ? "首段语音已生成，正在发送到挂件…"
-                : `正在播放后续语音 ${currentSegment}`
-            });
-          }
-          try {
-            await deviceTtsService.play(synthesized.result.data);
-          } catch (error) {
-            if (!firstError) firstError = error;
-            console.warn(`第 ${currentSegment} 段挂件播放失败，继续处理后续语音：`, error.message);
-          }
-        });
-      },
-      finish: async () => {
-        await playbackChain;
-        if (voiceTrace) {
-          voiceTrace.completedAt = Date.now();
-          voiceTrace.totalPipelineMs = voiceTrace.completedAt - voiceTrace.recordingStartedAt;
-          if (this._activeVoiceTrace === voiceTrace) this._activeVoiceTrace = null;
-        }
-        if (firstError) throw firstError;
-      }
-    };
   },
 
   async playReplySpeech(text, voiceTrace) {
@@ -702,7 +640,6 @@ Page({
       voiceTrace.firstSpeechSynthesisMs = voiceTrace.firstSpeechReadyAt - synthesisStartedAt;
       this._activeVoiceTrace = voiceTrace;
     }
-    this.setData({ hardwarePlaybackText: "首段语音已生成，正在发送到挂件…" });
     await deviceTtsService.play(first.result.data);
 
     if (remainingPromise) {
@@ -713,7 +650,6 @@ Page({
         throw new Error("后续语音生成结果不完整");
       }
       for (let index = 0; index < audioSegments.length; index += 1) {
-        this.setData({ hardwarePlaybackText: `正在播放后续语音 ${index + 2}/${segments.length}` });
         await deviceTtsService.play(audioSegments[index]);
       }
     }

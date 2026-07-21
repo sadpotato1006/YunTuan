@@ -11,17 +11,29 @@ function clone(value) {
 function createCollection() {
   return {
     where(query) {
-      return {
-        limit() {
-          return {
-            async get() {
-              return {
-                data: Array.from(documents.values())
-                  .filter(item => Object.keys(query).every(key => item[key] === query[key]))
-                  .map(clone)
-              };
-            }
-          };
+      let orderField = "";
+      let orderDirection = "asc";
+      let maximum = Infinity;
+      const request = {
+        orderBy(field, direction) {
+          orderField = field;
+          orderDirection = direction;
+          return request;
+        },
+        limit(value) {
+          maximum = value;
+          return request;
+        },
+        async get() {
+          const values = Array.from(documents.values())
+            .filter(item => Object.keys(query).every(key => item[key] === query[key]));
+          if (orderField) {
+            values.sort((first, second) => {
+              const result = String(first[orderField]).localeCompare(String(second[orderField]));
+              return orderDirection === "desc" ? -result : result;
+            });
+          }
+          return { data: values.slice(0, maximum).map(clone) };
         },
         async remove() {
           Array.from(documents.entries()).forEach(([id, item]) => {
@@ -30,6 +42,7 @@ function createCollection() {
           return {};
         }
       };
+      return request;
     },
     doc(id) {
       return {
@@ -112,6 +125,25 @@ Module._load = originalLoad;
   assert.strictEqual(legacyRecords.code, 0);
   assert.strictEqual(legacyRecords.data.records[0].note, "今天心情比较平常，慢慢照顾好自己。");
   assert.strictEqual(legacyRecords.data.records[0].noteCustomized, false);
+
+  for (let index = 0; index < 130; index += 1) {
+    const dayKey = `2025-${String(Math.floor(index / 28) + 1).padStart(2, "0")}-${String(index % 28 + 1).padStart(2, "0")}`;
+    documents.set(`long-history-${index}`, {
+      _id: `long-history-${index}`,
+      ownerKey: legacyOwnerKey,
+      dayKey,
+      name: "一般"
+    });
+  }
+  documents.set("latest-record", {
+    _id: "latest-record",
+    ownerKey: legacyOwnerKey,
+    dayKey: "2026-12-31",
+    name: "开心"
+  });
+  const longHistory = await emotionFunction.main({ action: "getEmotionRecords" });
+  assert.strictEqual(longHistory.data.records.length, 30);
+  assert.strictEqual(longHistory.data.records[0].id, "latest-record");
 
   currentOpenid = "emotion-user-2";
   const isolated = await emotionFunction.main({ action: "getEmotionSummary" });

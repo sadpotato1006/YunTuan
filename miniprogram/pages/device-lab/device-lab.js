@@ -27,7 +27,6 @@ Page({
           protocolMajor: state.protocolMajor,
           protocolMinor: state.protocolMinor,
           battery: state.battery,
-          chargingState: state.chargingState,
           name: state.name,
           modelNumber: state.modelNumber,
           firmwareRevision: state.firmwareRevision,

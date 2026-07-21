@@ -56,6 +56,7 @@ function createChatIdempotency(db, collectionName) {
         const attempts = existing ? (Number(existing.attempts) || 1) + 1 : 1;
         if (attempts > 3) throw new Error("CHAT_REQUEST_RETRY_LIMIT");
 
+        // 同一 requestId 的失败重试或超时接管不再次扣减每日额度，但仍计入频率窗口。
         if (!existing) {
           const actionCount = Number(dailyUsage.chat) || 0;
           if (actionCount >= policy.dailyQuota) throw new Error("CHAT_DAILY_QUOTA");
@@ -66,13 +67,14 @@ function createChatIdempotency(db, collectionName) {
         const pending = { key: requestKey, status: "pending", attempts, updatedAt: now };
         if (existingIndex >= 0) recentRequests.splice(existingIndex, 1);
         recentRequests.push(pending);
+        const trimmed = recentRequests.slice(-MAX_RECENT_REQUESTS);
         await document.set({
           data: Object.assign(withoutDocumentId(state), {
             dayKey,
             dailyUsage,
             windowStartedAt,
             windowCount,
-            recentRequests: recentRequests.slice(-MAX_RECENT_REQUESTS),
+            recentRequests: trimmed,
             updatedAt: now
           })
         });

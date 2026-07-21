@@ -69,6 +69,12 @@ assert.ok(tabSwipe.includes("MIN_DISTANCE = 64"));
 const emotion = read("miniprogram/pages/emotion/emotion.wxml");
 assert.ok(emotion.includes('data-no-swipe="true"'), "备注输入区不应触发页面滑动");
 
+const aiChat = read("miniprogram/pages/chat/chat.wxml");
+assert.ok(aiChat.includes("麦克风正常"));
+assert.ok(aiChat.includes("扬声器正常"));
+assert.ok(!aiChat.includes("短按挂件 PTT 键"), "AI 聊天页不应堆叠固件操作说明");
+assert.ok(!aiChat.includes("手机麦克风备用"), "AI 聊天页应保持硬件状态区精简");
+
 const chat = read("miniprogram/pages/social-chat/social-chat.wxml");
 const chatStyle = read("miniprogram/pages/social-chat/social-chat.wxss");
 assert.ok(chat.includes('<input class="message-input"'));

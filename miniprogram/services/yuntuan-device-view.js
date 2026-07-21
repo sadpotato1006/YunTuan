@@ -3,7 +3,7 @@ function toDevice(state) {
     id: state.deviceId || "", name: state.name || "云团智能挂件", connected: state.connected,
     connecting: state.connecting, ready: state.ready, simulated: state.simulated,
     canReconnect: state.canReconnect, rememberedDeviceName: state.rememberedDeviceName,
-    battery: state.battery, chargingState: state.chargingState, socialMode: state.socialMode,
+    battery: state.battery, socialMode: state.socialMode,
     socialReminder: state.socialReminder, vibration: state.vibration, sound: state.sound,
     uptime: state.uptime, protocolMajor: state.protocolMajor, protocolMinor: state.protocolMinor,
     capabilities: state.capabilities, securityMode: state.securityMode, bindState: state.bindState,
@@ -24,7 +24,7 @@ function homeOverview(state) {
   return {
     greeting,
     careTip: state.connected
-      ? (state.chargingState === 1 ? "云团挂件正在充电，充满后就可以安心出门。" : "云团挂件连接正常，出门前记得查看电量。")
+      ? "云团挂件连接正常，出门前记得查看电量。"
       : "云团挂件尚未连接，可以前往设备页进行连接。",
     device: toDevice(state)
   };

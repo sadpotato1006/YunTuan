@@ -30,8 +30,10 @@
 .voice-btn { min-height: 100rpx; border-radius: 50rpx; background: #52796f !important; color: #fff !important; font-size: 34rpx; }
 .voice-btn.listening { background: #d07a68 !important; }
 .voice-btn::after { border: 0; }
-.hardware-voice { padding: 20rpx 24rpx; border-radius: 18rpx; background: #eef3ef; text-align: left; border: 2rpx solid transparent; }
-.hardware-voice.active { border-color: #7ca294; background: #e8f2ed; }
-.hardware-voice-title { display: block; color: #385f54; font-size: 30rpx; font-weight: 600; }
-.hardware-voice-status { display: block; margin-top: 8rpx; color: #52796f; font-size: 28rpx; }
-.hardware-voice-tip { display: block; margin-top: 8rpx; color: #7b8984; font-size: 24rpx; line-height: 1.5; }
+.hardware-status { display: flex; justify-content: center; gap: 36rpx; margin: 14rpx 0 18rpx; color: #52796f; font-size: 26rpx; }
+.hardware-status-item { display: flex; align-items: center; gap: 10rpx; }
+.hardware-status-dot { width: 14rpx; height: 14rpx; border-radius: 50%; background: #a9b4b0; }
+.hardware-status-item.ready .hardware-status-dot { background: #5f9984; }
+.hardware-status-item.active .hardware-status-dot { background: #d39751; box-shadow: 0 0 0 6rpx rgba(211,151,81,.14); }
+.hardware-status-item.error { color: #b45f50; }
+.hardware-status-item.error .hardware-status-dot { background: #c66f60; }

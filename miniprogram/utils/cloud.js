@@ -13,10 +13,6 @@ function callCloudFunction(name, data) {
       reject(new Error("当前未启用云开发模式"));
       return;
     }
-    if (!config.cloudEnvId) {
-      reject(new Error("尚未配置云开发环境 ID"));
-      return;
-    }
     if (!wx.cloud || typeof wx.cloud.callFunction !== "function") {
       reject(new Error("当前环境不支持微信云开发"));
       return;

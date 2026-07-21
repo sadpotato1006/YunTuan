@@ -1,7 +1,4 @@
 const assert = require("assert");
-const Module = require("module");
-
-let pageDefinition = null;
 let activeSyntheses = 0;
 let maximumActiveSyntheses = 0;
 const synthesisOrder = [];
@@ -26,38 +23,19 @@ const ttsServiceStub = {
   }
 };
 
-const originalLoad = Module._load;
-const originalPage = global.Page;
 const originalWarn = console.warn;
-
-Module._load = function load(request, parent, isMain) {
-  if (parent && /miniprogram[\\/]pages[\\/]chat[\\/]chat\.js$/.test(parent.filename)) {
-    if (request === "../../services/chat") return chatServiceStub;
-    if (request === "../../services/yuntuan-audio") return {};
-    if (request === "../../services/yuntuan-tts") return ttsServiceStub;
-  }
-  return originalLoad.call(this, request, parent, isMain);
-};
-global.Page = definition => { pageDefinition = definition; };
 console.warn = () => {};
-
-try {
-  require("../miniprogram/pages/chat/chat");
-} finally {
-  Module._load = originalLoad;
-  global.Page = originalPage;
-}
+const { createStreamingSpeechQueue } = require("../miniprogram/pages/chat/streaming-speech-queue");
 
 (async () => {
-  assert.ok(pageDefinition && typeof pageDefinition.createStreamingSpeechQueue === "function");
-  const page = Object.assign({
+  const page = {
     data: {},
     setData(patch) {
       this.data = Object.assign({}, this.data, patch);
     }
-  }, pageDefinition);
+  };
 
-  const queue = page.createStreamingSpeechQueue(null);
+  const queue = createStreamingSpeechQueue(page, chatServiceStub, ttsServiceStub, null);
   queue.enqueue("第一段。");
   queue.enqueue("第二段。");
   queue.enqueue("第三段。");

@@ -233,7 +233,9 @@ async function getConversation(conversationId, options) {
     pageSize: source.pageSize || 30
   };
   const beforeCreatedAt = Number(source.beforeCreatedAt) || 0;
+  const afterCreatedAt = Number(source.afterCreatedAt) || 0;
   if (beforeCreatedAt > 0) request.beforeCreatedAt = beforeCreatedAt;
+  if (afterCreatedAt > 0) request.afterCreatedAt = afterCreatedAt;
   const response = await callCloudFunction("social", request);
   return response.data;
 }

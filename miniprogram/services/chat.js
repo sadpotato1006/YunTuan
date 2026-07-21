@@ -76,10 +76,6 @@ function streamMessage(message, history, handlers, requestId) {
   if (!canStreamMessage()) {
     return Promise.reject(createStreamError("当前环境不支持流式聊天", true, ""));
   }
-  if (!config.cloudEnvId) {
-    return Promise.reject(createStreamError("尚未配置云开发环境 ID", true, ""));
-  }
-
   const callbacks = handlers || {};
   const context = buildContext(history);
   let requestTask = null;
@@ -166,9 +162,8 @@ function streamMessage(message, history, handlers, requestId) {
     });
 
     try {
-      requestTask = wx.cloud.callHTTPFunction({
+      const requestOptions = {
         name: config.streamChatFunctionName || "chat-stream",
-        config: { env: config.cloudEnvId },
         path: config.streamChatPath || "/chat",
         method: "post",
         data: {
@@ -211,7 +206,9 @@ function streamMessage(message, history, handlers, requestId) {
             partialReply
           ));
         }
-      });
+      };
+      if (config.cloudEnvId) requestOptions.config = { env: config.cloudEnvId };
+      requestTask = wx.cloud.callHTTPFunction(requestOptions);
     } catch (error) {
       finishWithError(createStreamError(
         error.message || "无法启动流式聊天",

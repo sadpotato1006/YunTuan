@@ -10,6 +10,8 @@ const {
   beijingDayKey, normalizeRequestId, toPublicMessage, normalizeOpaqueId, withoutDocumentId
 } = require("./social-utils");
 const { createSocialInbox, socialInboxSortKey } = require("./social-inbox");
+const { createSocialStore } = require("./social-store");
+const { routeSocialAction } = require("./social-action-router");
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
@@ -41,6 +43,14 @@ const REPORT_REASONS = new Set(["spam", "harassment", "fraud", "inappropriate", 
 const SOLO_TEST_ACTIONS = new Set(["message", "request_contact", "accept_contact", "share_contact"]);
 const MESSAGE_PAGE_SIZE = 30;
 const MESSAGE_PAGE_SIZE_MAX = 50;
+const {
+  readDocument,
+  readTransactionDocument,
+  readDocuments,
+  readAllDocuments,
+  removeDocument,
+  removeWhere
+} = createSocialStore(db, isNotFoundError);
 
 const getSocialInbox = createSocialInbox({
   db,
@@ -61,6 +71,29 @@ const getSocialInbox = createSocialInbox({
   withoutDocumentId,
   publicError
 });
+const socialActionHandlers = {
+  sendGreetingWithSoloTest,
+  getSocialInbox,
+  respondGreeting,
+  getConversation,
+  sendSocialMessage,
+  runSoloTestPeerAction,
+  requestContactExchange,
+  respondContactExchange,
+  cancelContactExchange,
+  getContactExchange,
+  stageContactQr,
+  cancelStagedContactShare,
+  shareContact,
+  withdrawContact,
+  clearConversationForMe,
+  endRelationship,
+  blockUser,
+  getBlockedUsers,
+  unblockUser,
+  reportMessage,
+  deleteMyData
+};
 
 exports.main = async event => {
   try {
@@ -117,108 +150,8 @@ exports.main = async event => {
       const interactionRef = await createEncounterReference(ownerKey, mapping.ownerKey);
       return success({ profile: toPublicProfile(profile), interactionRef });
     }
-    if (action === "sendGreeting") {
-      return success(await sendGreetingWithSoloTest(ownerKey, safeEvent.interactionRef));
-    }
-    if (action === "getSocialInbox") {
-      return success(await getSocialInbox(ownerKey, safeEvent));
-    }
-    if (action === "respondGreeting") {
-      return success(await respondGreeting(ownerKey, safeEvent.greetingId, safeEvent.accept));
-    }
-    if (action === "getConversation") {
-      return success(await getConversation(
-        ownerKey,
-        safeEvent.conversationId,
-        safeEvent.beforeCreatedAt,
-        safeEvent.pageSize
-      ));
-    }
-    if (action === "sendSocialMessage") {
-      return success(await sendSocialMessage(
-        ownerKey,
-        safeEvent.conversationId,
-        safeEvent.content,
-        safeEvent.requestId
-      ));
-    }
-    if (action === "soloTestPeerAction") {
-      return success(await runSoloTestPeerAction(
-        ownerKey,
-        safeEvent.conversationId,
-        safeEvent.testAction
-      ));
-    }
-    if (action === "requestContactExchange") {
-      return success(await requestContactExchange(ownerKey, safeEvent.conversationId));
-    }
-    if (action === "respondContactExchange") {
-      return success(await respondContactExchange(
-        ownerKey,
-        safeEvent.conversationId,
-        safeEvent.accept
-      ));
-    }
-    if (action === "cancelContactExchange") {
-      return success(await cancelContactExchange(ownerKey, safeEvent.conversationId));
-    }
-    if (action === "getContactExchange") {
-      return success(await getContactExchange(ownerKey, safeEvent.conversationId));
-    }
-    if (action === "stageContactQr") {
-      return success(await stageContactQr(
-        ownerKey,
-        safeEvent.conversationId,
-        safeEvent.optionId,
-        safeEvent.fileId,
-        safeEvent.requestId
-      ));
-    }
-    if (action === "cancelStagedContactShare") {
-      return success(await cancelStagedContactShare(
-        ownerKey,
-        safeEvent.conversationId,
-        safeEvent.requestId
-      ));
-    }
-    if (action === "shareContact") {
-      return success(await shareContact(
-        ownerKey,
-        safeEvent.conversationId,
-        safeEvent.contactItems,
-        safeEvent.requestId
-      ));
-    }
-    if (action === "withdrawContact") {
-      return success(await withdrawContact(ownerKey, safeEvent.conversationId));
-    }
-    if (action === "clearConversationForMe") {
-      return success(await clearConversationForMe(ownerKey, safeEvent.conversationId));
-    }
-    if (action === "endRelationship") {
-      return success(await endRelationship(ownerKey, safeEvent.conversationId));
-    }
-    if (action === "blockUser") {
-      return success(await blockUser(ownerKey, safeEvent.conversationId));
-    }
-    if (action === "getBlockedUsers") {
-      return success({ blockedUsers: await getBlockedUsers(ownerKey) });
-    }
-    if (action === "unblockUser") {
-      return success(await unblockUser(ownerKey, safeEvent.blockId));
-    }
-    if (action === "reportMessage") {
-      return success(await reportMessage(
-        ownerKey,
-        safeEvent.conversationId,
-        safeEvent.messageId,
-        safeEvent.reason,
-        safeEvent.note
-      ));
-    }
-    if (action === "deleteMyData") {
-      return success(await deleteMyData(ownerKey));
-    }
+    const routed = await routeSocialAction(action, ownerKey, safeEvent, socialActionHandlers);
+    if (routed.handled) return success(routed.data);
     return { code: 400, message: "不支持的社交名片操作", data: {} };
   } catch (error) {
     if (error && error.publicMessage) {
@@ -639,7 +572,7 @@ function toPublicGreetingMessagePolicy(conversation, ownerKey) {
   };
 }
 
-async function getConversation(ownerKey, conversationValue, beforeValue, pageSizeValue) {
+async function getConversation(ownerKey, conversationValue, beforeValue, pageSizeValue, afterValue) {
   const conversationId = normalizeOpaqueId(conversationValue, 64, "会话编号无效");
   let conversation = await readDocument(CONVERSATION_COLLECTION, conversationId);
   const peerOwnerKey = getConversationPeer(conversation, ownerKey);
@@ -662,11 +595,21 @@ async function getConversation(ownerKey, conversationValue, beforeValue, pageSiz
   const clearedBeforeAt = Math.max(0, Number(match.clearedBeforeAt) || 0);
   const pageSize = normalizeMessagePageSize(pageSizeValue);
   const beforeCreatedAt = normalizeMessageCursor(beforeValue);
-  const page = await readMessagePage(conversationId, clearedBeforeAt, beforeCreatedAt, pageSize);
-  const messages = page.records
-    .slice()
-    .reverse()
-    .map(record => toPublicMessage(record, ownerKey));
+  const afterCreatedAt = normalizeMessageCursor(afterValue);
+  if (beforeCreatedAt && afterCreatedAt) {
+    throw publicError(400, "聊天记录不能同时向前和向后分页");
+  }
+  const page = await readMessagePage(
+    conversationId,
+    clearedBeforeAt,
+    beforeCreatedAt,
+    afterCreatedAt,
+    pageSize
+  );
+  const orderedRecords = page.direction === "after"
+    ? page.records
+    : page.records.slice().reverse();
+  const messages = orderedRecords.map(record => toPublicMessage(record, ownerKey));
 
   if (!beforeCreatedAt && (
     match.newMatch === true ||
@@ -691,7 +634,8 @@ async function getConversation(ownerKey, conversationValue, beforeValue, pageSiz
     messages,
     pagination: {
       hasMore: page.hasMore,
-      nextCursor: page.nextCursor
+      nextCursor: page.nextCursor,
+      direction: page.direction
     },
     messagePolicy: toPublicGreetingMessagePolicy(conversation, ownerKey),
     contactExchange: await getContactExchangeState(ownerKey, peerOwnerKey, conversationId)
@@ -1440,24 +1384,28 @@ async function assertResolveQuota(ownerKey) {
   }, 5);
 }
 
-async function readMessagePage(conversationId, clearedBeforeAt, beforeCreatedAt, pageSize) {
-  const createdAtCondition = beforeCreatedAt
-    ? command.and(command.gt(clearedBeforeAt), command.lt(beforeCreatedAt))
-    : command.gt(clearedBeforeAt);
+async function readMessagePage(conversationId, clearedBeforeAt, beforeCreatedAt, afterCreatedAt, pageSize) {
+  const direction = afterCreatedAt ? "after" : "before";
+  const createdAtCondition = afterCreatedAt
+    ? command.gt(Math.max(clearedBeforeAt, afterCreatedAt))
+    : (beforeCreatedAt
+      ? command.and(command.gt(clearedBeforeAt), command.lt(beforeCreatedAt))
+      : command.gt(clearedBeforeAt));
   const response = await db.collection(MESSAGE_COLLECTION)
     .where({ conversationId, createdAt: createdAtCondition })
-    .orderBy("createdAt", "desc")
+    .orderBy("createdAt", direction === "after" ? "asc" : "desc")
     .limit(pageSize + 1)
     .get();
   const records = response && Array.isArray(response.data) ? response.data : [];
   const visible = records.filter(record => (Number(record.createdAt) || 0) > clearedBeforeAt);
   const hasMore = visible.length > pageSize;
   const pageRecords = visible.slice(0, pageSize);
-  const oldest = pageRecords[pageRecords.length - 1];
+  const cursorRecord = pageRecords[pageRecords.length - 1];
   return {
     records: pageRecords,
     hasMore,
-    nextCursor: hasMore && oldest ? Number(oldest.createdAt) || null : null
+    nextCursor: hasMore && cursorRecord ? Number(cursorRecord.createdAt) || null : null,
+    direction
   };
 }
 
@@ -1474,64 +1422,4 @@ function normalizeMessageCursor(value) {
     throw publicError(400, "聊天记录分页位置无效");
   }
   return Math.floor(cursor);
-}
-
-async function readDocument(collectionName, id) {
-  try {
-    const result = await db.collection(collectionName).doc(id).get();
-    return result && result.data ? result.data : null;
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
-    throw error;
-  }
-}
-
-async function readTransactionDocument(reference) {
-  try {
-    const result = await reference.get();
-    return result && result.data ? result.data : null;
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
-    throw error;
-  }
-}
-
-async function readDocuments(collectionName, query, limit) {
-  const response = await db.collection(collectionName).where(query).limit(limit || 30).get();
-  return response && Array.isArray(response.data) ? response.data : [];
-}
-
-async function readAllDocuments(collectionName, query, pageSize) {
-  const size = Math.max(20, Math.min(100, Number(pageSize) || 100));
-  const records = [];
-  let offset = 0;
-  while (true) {
-    let request = db.collection(collectionName).where(query);
-    if (offset && typeof request.skip === "function") request = request.skip(offset);
-    else if (offset) break;
-    const response = await request.limit(size).get();
-    const page = response && Array.isArray(response.data) ? response.data : [];
-    records.push(...page);
-    if (page.length < size) break;
-    offset += page.length;
-  }
-  return records;
-}
-
-async function removeDocument(collectionName, id) {
-  try {
-    await db.collection(collectionName).doc(id).remove();
-  } catch (error) {
-    if (!isNotFoundError(error)) throw error;
-  }
-}
-
-async function removeWhere(collectionName, query) {
-  for (let batch = 0; batch < 200; batch += 1) {
-    const records = await readDocuments(collectionName, query, 100);
-    if (!records.length) return;
-    await Promise.all(records.map(record => removeDocument(collectionName, record._id)));
-    if (records.length < 100) return;
-  }
-  throw new Error(`批量删除 ${collectionName} 超过安全上限，请重试`);
 }

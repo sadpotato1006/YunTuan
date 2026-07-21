@@ -51,10 +51,12 @@ exports.main = async event => {
 };
 
 async function readRecords(ownerKey) {
-  const response = await db.collection(COLLECTION).where({ ownerKey }).limit(100).get();
+  const response = await db.collection(COLLECTION)
+    .where({ ownerKey })
+    .orderBy("dayKey", "desc")
+    .limit(MAX_RECORDS)
+    .get();
   return (response && Array.isArray(response.data) ? response.data : [])
-    .sort((first, second) => String(second.dayKey).localeCompare(String(first.dayKey)))
-    .slice(0, MAX_RECORDS)
     .map(toPublicRecord);
 }
 

@@ -1,5 +1,6 @@
 const profileService = require("../../services/social-profile");
 const socialService = require("../../services/social");
+const socialChatCache = require("../../services/social-chat-cache");
 
 const EMPTY_EXCHANGE = { status: "none", myContact: null, peerContact: null };
 
@@ -49,6 +50,7 @@ Page({
           sharedContactIds(contactExchange.myContact)
         )
       });
+      socialChatCache.patchConversation(this.data.conversationId, { contactExchange });
     } catch (error) {
       this.setData({ loading: false });
       wx.showToast({ title: error.message || "联系方式加载失败", icon: "none" });
@@ -95,6 +97,7 @@ Page({
           sharedContactIds(contactExchange.myContact)
         )
       });
+      socialChatCache.patchConversation(this.data.conversationId, { contactExchange });
       wx.showToast({ title: "已分享所选资料", icon: "success" });
     } catch (error) {
       wx.showToast({ title: error.message || "分享失败", icon: "none" });
@@ -123,6 +126,7 @@ Page({
         contactExchange,
         localOptions: decorateLocalOptions(profileService.getProfile().contactOptions, [])
       });
+      socialChatCache.patchConversation(this.data.conversationId, { contactExchange });
       wx.showToast({ title: "已撤回", icon: "success" });
     } catch (error) {
       wx.showToast({ title: error.message || "撤回失败", icon: "none" });

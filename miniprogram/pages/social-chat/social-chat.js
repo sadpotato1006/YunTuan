@@ -1,4 +1,5 @@
 const socialService = require("../../services/social");
+const socialChatCache = require("../../services/social-chat-cache");
 const {
   EMPTY_CONTACT_EXCHANGE,
   EMPTY_MESSAGE_POLICY,
@@ -62,7 +63,7 @@ Page({
       return;
     }
     this.setData({ conversationId });
-    this.loadConversation();
+    this.restoreCachedConversation();
   },
 
   onShow() {
@@ -70,7 +71,13 @@ Page({
     this._refreshDelay = ACTIVE_REFRESH_MS;
     this.setForegroundView("chat");
     this.stopRefreshTimer();
-    this.loadConversation(true).finally(() => this.scheduleRefresh(ACTIVE_REFRESH_MS));
+    if (this._conversationLoaded && socialChatCache.isFresh(this._lastConversationSyncAt)) {
+      const remainingFreshTime = socialChatCache.CACHE_FRESH_MS -
+        (Date.now() - this._lastConversationSyncAt);
+      this.scheduleRefresh(Math.max(ACTIVE_REFRESH_MS, remainingFreshTime));
+      return;
+    }
+    this.loadConversation(this._conversationLoaded).finally(() => this.scheduleRefresh(ACTIVE_REFRESH_MS));
   },
 
   onHide() { this.leavePage(); },
@@ -115,6 +122,44 @@ Page({
     }
   },
 
+  restoreCachedConversation() {
+    const cached = socialChatCache.readConversation(this.data.conversationId);
+    if (!cached) return false;
+    const profile = cached.profile || DEFAULT_PROFILE;
+    const messages = decorateMessages(cached.messages);
+    const contactExchange = normalizeContactExchange(cached.contactExchange);
+    const messagePolicy = normalizeMessagePolicy(cached.messagePolicy);
+    this.setData({
+      loading: false,
+      relationshipEnded: false,
+      profile,
+      messages,
+      hasMoreMessages: cached.hasMoreMessages === true,
+      messageCursor: Number(cached.messageCursor) || 0,
+      messagePolicy,
+      contactExchange,
+      contactSummary: contactExchangeSummary(contactExchange),
+      scrollTarget: messages.length ? `message-${messages[messages.length - 1].id}` : ""
+    });
+    this._conversationLoaded = true;
+    this._lastConversationSyncAt = Number(cached.syncedAt) || 0;
+    wx.setNavigationBarTitle({ title: profile.nickname || "伙伴聊天" });
+    return true;
+  },
+
+  persistConversationCache(overrides) {
+    const state = Object.assign({
+      profile: this.data.profile,
+      messages: this.data.messages,
+      hasMoreMessages: this.data.hasMoreMessages,
+      messageCursor: this.data.messageCursor,
+      messagePolicy: this.data.messagePolicy,
+      contactExchange: this.data.contactExchange,
+      syncedAt: this._lastConversationSyncAt
+    }, overrides || {});
+    socialChatCache.writeConversation(this.data.conversationId, state);
+  },
+
   async loadConversation(silent, scrollToBottom) {
     if (!this.data.conversationId || this._loadingConversation || this.data.relationshipEnded) return false;
     this._loadingConversation = true;
@@ -124,7 +169,14 @@ Page({
       this.data.messagePolicy
     );
     try {
-      const result = await socialService.getConversation(this.data.conversationId, { pageSize: 30 });
+      const latestMessage = this.data.messages[this.data.messages.length - 1];
+      const afterCreatedAt = this._conversationLoaded && latestMessage
+        ? (Number(latestMessage.createdAt) || 0)
+        : 0;
+      const result = await socialService.getConversation(this.data.conversationId, {
+        pageSize: 30,
+        afterCreatedAt
+      });
       const profile = result.conversation && result.conversation.profile
         ? result.conversation.profile
         : DEFAULT_PROFILE;
@@ -158,6 +210,8 @@ Page({
       };
       this.setData(nextData);
       this._conversationLoaded = true;
+      this._lastConversationSyncAt = Date.now();
+      this.persistConversationCache(nextData);
       const changed = beforeSignature !== conversationSignature(messages, contactExchange, messagePolicy);
       wx.setNavigationBarTitle({ title: profile.nickname || "伙伴聊天" });
       if (!silent) {
@@ -195,6 +249,8 @@ Page({
       }, () => {
         if (anchor) this.setData({ scrollTarget: `message-${anchor}` });
       });
+      this._lastConversationSyncAt = Date.now();
+      this.persistConversationCache();
     } catch (error) {
       wx.showToast({ title: error.message || "更早消息加载失败", icon: "none" });
     } finally {
@@ -204,6 +260,7 @@ Page({
 
   handleRelationshipEnded() {
     this.stopRefreshTimer();
+    socialChatCache.removeConversation(this.data.conversationId);
     this.setData({ relationshipEnded: true, sending: false, showEmojis: false });
     if (this._relationshipNoticeShown) return;
     this._relationshipNoticeShown = true;
@@ -264,10 +321,29 @@ Page({
     const pending = this._pendingRequest;
     this.setData({ sending: true, showEmojis: false });
     try {
-      await socialService.sendSocialMessage(this.data.conversationId, pending.content, pending.requestId);
+      const result = await socialService.sendSocialMessage(
+        this.data.conversationId,
+        pending.content,
+        pending.requestId
+      );
       this._pendingRequest = null;
-      this.setData({ inputValue: "" });
-      await this.loadConversation(true, true);
+      const sentMessages = decorateMessages(result && result.message ? [result.message] : []);
+      const messages = mergeMessages(this.data.messages, sentMessages);
+      const currentPolicy = this.data.messagePolicy || EMPTY_MESSAGE_POLICY;
+      const messagePolicy = currentPolicy.limited
+        ? normalizeMessagePolicy({
+          limited: true,
+          remainingBeforeReply: Math.max(0, Number(currentPolicy.remainingBeforeReply) - 1)
+        })
+        : currentPolicy;
+      this._lastConversationSyncAt = Date.now();
+      this.setData({
+        inputValue: "",
+        messages,
+        messagePolicy,
+        scrollTarget: messages.length ? `message-${messages[messages.length - 1].id}` : ""
+      });
+      this.persistConversationCache({ messages, messagePolicy });
       this.wakeRefresh();
     } catch (error) {
       if (isRelationshipEndedError(error)) this.handleRelationshipEnded();
@@ -356,6 +432,8 @@ Page({
       const result = await socialService.requestContactExchange(this.data.conversationId);
       const contactExchange = normalizeContactExchange(result.contactExchange);
       this.setData({ contactExchange, contactSummary: contactExchangeSummary(contactExchange) });
+      this._lastConversationSyncAt = Date.now();
+      this.persistConversationCache({ contactExchange });
       wx.showToast({ title: "申请已发送", icon: "success" });
     } catch (error) {
       wx.showToast({ title: error.message || "申请发送失败", icon: "none" });
@@ -373,6 +451,8 @@ Page({
         contactExchange,
         contactSummary: contactExchangeSummary(contactExchange)
       });
+      this._lastConversationSyncAt = Date.now();
+      this.persistConversationCache({ contactExchange });
       wx.showToast({ title: accept ? "已同意，可按需分享联系方式" : "已拒绝申请", icon: "none" });
     } catch (error) {
       wx.showToast({ title: error.message || "操作失败", icon: "none" });
@@ -391,6 +471,8 @@ Page({
         contactExchange,
         contactSummary: contactExchangeSummary(contactExchange)
       });
+      this._lastConversationSyncAt = Date.now();
+      this.persistConversationCache({ contactExchange });
       wx.showToast({ title: "申请已撤回", icon: "success" });
     } catch (error) {
       wx.showToast({ title: error.message || "撤回申请失败", icon: "none" });
@@ -418,6 +500,12 @@ Page({
         messageCursor: 0,
         scrollTarget: ""
       });
+      this._lastConversationSyncAt = Date.now();
+      this.persistConversationCache({
+        messages: [],
+        hasMoreMessages: false,
+        messageCursor: 0
+      });
       wx.showToast({ title: "已清空我这边的记录", icon: "success" });
     } catch (error) {
       wx.showToast({ title: error.message || "清空失败", icon: "none" });
@@ -437,6 +525,7 @@ Page({
   async endRelationship() {
     try {
       await socialService.endRelationship(this.data.conversationId);
+      socialChatCache.removeConversation(this.data.conversationId);
       wx.showToast({ title: "伙伴关系已解除", icon: "success" });
       setTimeout(() => wx.navigateBack(), 500);
     } catch (error) {
@@ -457,6 +546,7 @@ Page({
   async blockUser() {
     try {
       await socialService.blockUser(this.data.conversationId);
+      socialChatCache.removeConversation(this.data.conversationId);
       wx.showToast({ title: "已屏蔽", icon: "success" });
       setTimeout(() => wx.navigateBack(), 500);
     } catch (error) {

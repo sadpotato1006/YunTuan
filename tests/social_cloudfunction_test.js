@@ -365,6 +365,36 @@ function profile(nickname, overrides) {
     20,
     "相邻分页不能重复消息"
   );
+  const firstIncrementalPage = await socialFunction.main({
+    action: "getConversation",
+    conversationId,
+    pageSize: 3,
+    afterCreatedAt: paginationBaseTime + 59
+  });
+  assert.strictEqual(firstIncrementalPage.code, 0);
+  assert.strictEqual(firstIncrementalPage.data.pagination.direction, "after");
+  assert.strictEqual(firstIncrementalPage.data.pagination.hasMore, true);
+  assert.deepStrictEqual(
+    firstIncrementalPage.data.messages.map(message => message.content),
+    ["分页消息 60", "分页消息 61", "分页消息 62"]
+  );
+  const secondIncrementalPage = await socialFunction.main({
+    action: "getConversation",
+    conversationId,
+    pageSize: 3,
+    afterCreatedAt: firstIncrementalPage.data.pagination.nextCursor
+  });
+  assert.deepStrictEqual(
+    secondIncrementalPage.data.messages.map(message => message.content),
+    ["分页消息 63", "分页消息 64"]
+  );
+  const conflictingCursors = await socialFunction.main({
+    action: "getConversation",
+    conversationId,
+    beforeCreatedAt: paginationBaseTime + 60,
+    afterCreatedAt: paginationBaseTime + 50
+  });
+  assert.strictEqual(conflictingCursors.code, 400);
   for (let index = 0; index < 65; index += 1) {
     getCollection("social_messages").delete(
       `pagination-message-${String(index).padStart(3, "0")}`

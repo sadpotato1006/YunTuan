@@ -8,6 +8,13 @@ const config = require("../config/ble");
 const protocol = require("../utils/yuntuan-protocol");
 const bufferUtils = require("../utils/buffer");
 const { toDevice: buildDeviceView, homeOverview, result } = require("./yuntuan-device-view");
+const { createGattHelpers } = require("./yuntuan-device-gatt");
+const {
+  assertRequiredGatt,
+  findCharacteristic,
+  sameUuid,
+  validateProtocolInfo
+} = createGattHelpers(config);
 
 const RECONNECT_DELAYS = [1000, 3000, 5000, 10000, 15000, 30000];
 const LAST_DEVICE_STORAGE_KEY = "yuntuan_last_ble_device";
@@ -27,7 +34,6 @@ const initialState = {
   name: "云团智能挂件",
   devices: [],
   battery: null,
-  chargingState: 255,
   socialMode: false,
   socialReminder: true,
   vibration: true,
@@ -174,7 +180,6 @@ function applyEvent(event) {
   if (event.type === "statusChanged") {
     setState({
       battery: event.battery,
-      chargingState: event.chargingState,
       socialMode: event.socialMode,
       lastEventText: "设备状态已更新"
     });
@@ -614,22 +619,14 @@ async function readStandardDeviceInformation(services) {
   setState(patch);
 }
 
-function validateProtocolInfo(info) {
-  if (info.protocolMajor !== config.protocolMajor) {
-    throw new Error(`设备协议主版本 ${info.protocolMajor} 与小程序版本 ${config.protocolMajor} 不兼容`);
-  }
-  if (info.protocolMinor < config.protocolMinor) {
-    throw new Error(
-      `设备协议版本 ${info.protocolMajor}.${info.protocolMinor} 过低，小程序至少需要 ${config.protocolMajor}.${config.protocolMinor}`
-    );
-  }
-  if (info.reserved !== undefined && info.reserved !== 0) throw new Error("Protocol Info 保留字节必须为 0");
-}
-
 async function getStatus() {
   const response = await request(config.COMMANDS.GET_STATUS);
   const status = protocol.parseStatusData(response.data);
-  setState(status);
+  setState({
+    battery: status.battery,
+    socialMode: status.socialMode,
+    uptime: status.uptime
+  });
   return result({ device: toDevice() });
 }
 
@@ -931,35 +928,6 @@ function resetConnectionState(statusText) {
     devices: state.devices,
     statusText
   }));
-}
-
-function assertRequiredGatt(services) {
-  const required = [
-    [config.UUIDS.batteryService, config.UUIDS.batteryLevel, "Battery Level"],
-    [config.UUIDS.deviceInfoService, config.UUIDS.modelNumber, "Model Number"],
-    [config.UUIDS.deviceInfoService, config.UUIDS.firmwareRevision, "Firmware Revision"],
-    [config.UUIDS.deviceInfoService, config.UUIDS.hardwareRevision, "Hardware Revision"],
-    [config.UUIDS.controlService, config.UUIDS.commandRx, "Command RX"],
-    [config.UUIDS.controlService, config.UUIDS.eventTx, "Event TX"],
-    [config.UUIDS.controlService, config.UUIDS.protocolInfo, "Protocol Info"]
-  ];
-  required.forEach(item => {
-    if (!findCharacteristic(services, item[0], item[1])) throw new Error(`设备缺少必需特征值：${item[2]}`);
-  });
-}
-
-function findCharacteristic(services, serviceId, characteristicId) {
-  const service = (services || []).find(item => sameUuid(item.uuid, serviceId));
-  if (!service) return null;
-  return (service.characteristics || []).find(item => sameUuid(item.uuid, characteristicId)) || null;
-}
-
-function sameUuid(first, second) {
-  return normalizeUuid(first) === normalizeUuid(second);
-}
-
-function normalizeUuid(value) {
-  return String(value || "").replace(/-/g, "").toUpperCase();
 }
 
 function nextSequence() {

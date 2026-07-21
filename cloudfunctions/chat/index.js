@@ -179,12 +179,8 @@ async function sendChatMessage(event, openid) {
       }
     }
     if (error instanceof PublicError) throw error;
-    // 不要打印 API Key，只记录状态码和错误信息
-    console.error("调用 AI 失败：", {
-      message: error.message,
-      status: error.response && error.response.status,
-      responseData: error.response && error.response.data
-    });
+    // 不记录上游响应正文，只保留排障所需的状态码、错误码和请求编号。
+    console.error("调用 AI 失败：", getUpstreamErrorLog(error));
 
     return {
       code: 500,
@@ -192,6 +188,25 @@ async function sendChatMessage(event, openid) {
       data: {}
     };
   }
+}
+
+function getUpstreamErrorLog(error) {
+  const response = error && error.response;
+  const data = response && response.data && typeof response.data === "object"
+    ? response.data
+    : {};
+  const nestedError = data.error && typeof data.error === "object" ? data.error : {};
+  const headers = response && response.headers && typeof response.headers === "object"
+    ? response.headers
+    : {};
+  return {
+    status: Number(response && response.status) || 0,
+    providerCode: String(nestedError.code || data.code || "").slice(0, 80),
+    requestId: String(
+      headers["x-request-id"] || headers["x-tc-requestid"] ||
+      nestedError.request_id || data.request_id || ""
+    ).slice(0, 128)
+  };
 }
 
 function getCurrentOpenid() {

@@ -15,10 +15,13 @@ const contactJs = read("miniprogram/pages/social-contact/social-contact.js");
 const contactWxml = read("miniprogram/pages/social-contact/social-contact.wxml");
 const profileService = read("miniprogram/services/social-profile.js");
 const socialService = read("miniprogram/services/social.js");
+const socialChatCache = read("miniprogram/services/social-chat-cache.js");
 const socialCloud = [
   read("cloudfunctions/social/index.js"),
   read("cloudfunctions/social/social-utils.js"),
-  read("cloudfunctions/social/social-inbox.js")
+  read("cloudfunctions/social/social-inbox.js"),
+  read("cloudfunctions/social/social-store.js"),
+  read("cloudfunctions/social/social-action-router.js")
 ].join("\n");
 
 assert.ok(appConfig.pages.includes("pages/partners/partners"));
@@ -66,6 +69,7 @@ assert.ok(contactWxml.includes("管理本机资料"));
 assert.ok(contactWxml.includes('bindtap="toggleOption"'));
 assert.ok(contactWxml.includes("撤回当前分享"));
 assert.ok(contactJs.includes("profileService.getProfile()"));
+assert.ok(contactJs.includes("socialChatCache.patchConversation"));
 assert.ok(chatWxml.includes('bindlongpress="reportMessage"'));
 assert.ok(chatWxml.includes("单人测试模式"));
 assert.ok(chatWxml.includes('<input class="message-input"'));
@@ -75,15 +79,23 @@ assert.ok(chatWxml.includes("messagePolicy.tip"));
 assert.ok(chatJs.includes("已发送 3 条，请等待对方回复"));
 assert.ok(!chatWxml.includes('<textarea class="message-input"'));
 assert.ok(chatJs.includes("beforeCreatedAt"));
+assert.ok(chatJs.includes("afterCreatedAt"));
 assert.ok(chatJs.includes("mergeMessages"));
 assert.ok(chatJs.includes("runSoloTestAction"));
 assert.ok(chatJs.includes("scheduleRefresh"));
 assert.ok(chatJs.includes("conversationSignature"));
+assert.ok(chatJs.includes("restoreCachedConversation"));
+assert.ok(chatJs.includes("persistConversationCache"));
+assert.ok(chatJs.includes("result && result.message"));
+assert.ok(chatJs.includes("socialChatCache.removeConversation"));
+assert.ok(socialChatCache.includes("MAX_MESSAGES_PER_CONVERSATION"));
+assert.ok(socialChatCache.includes("CACHE_FRESH_MS"));
 assert.ok(!chatJs.includes("setInterval"));
 assert.ok(chatJs.includes("confirmEndRelationship"));
 assert.ok(chatJs.includes("confirmBlockUser"));
 assert.ok(chatJs.includes("clearConversationForMe"));
 assert.ok(socialService.includes('action: "getConversation"'));
+assert.ok(socialService.includes("source.afterCreatedAt"));
 assert.ok(socialService.includes('action: "sendSocialMessage"'));
 assert.ok(socialService.includes('action: "requestContactExchange"'));
 assert.ok(socialService.includes('action: "cancelContactExchange"'));
@@ -109,7 +121,7 @@ assert.ok(socialCloud.includes('orderBy("inboxSortKey", "desc")'));
 assert.ok(socialCloud.includes("CONTACT_STAGE_TTL_MS"));
 assert.ok(socialCloud.includes("lastShareFingerprint"));
 assert.ok(socialCloud.includes("对方回复前最多发送 3 条消息"));
-assert.ok(socialCloud.includes('orderBy("createdAt", "desc")'));
+assert.ok(socialCloud.includes('.orderBy("createdAt", direction === "after" ? "asc" : "desc")'));
 assert.ok(!socialCloud.includes("subscribeMessage.send"));
 assert.ok(!socialCloud.includes("NOTIFICATION_SUBSCRIPTION_COLLECTION"));
 assert.ok(socialCloud.includes("soloTestPeerOwnerKey"));

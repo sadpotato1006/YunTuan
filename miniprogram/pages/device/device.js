@@ -50,7 +50,6 @@ Page({
           canReconnect: state.canReconnect,
           rememberedDeviceName: state.rememberedDeviceName,
           battery: state.battery,
-          chargingState: state.chargingState,
           socialMode: state.socialMode,
           ownSocialToken: state.ownSocialToken,
           uptime: state.uptime,

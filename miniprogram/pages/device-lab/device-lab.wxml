@@ -10,7 +10,7 @@
       <view class="lab-device-icon">{{device.simulated ? '拟' : '硬'}}</view>
       <view>
         <text class="status-title">{{device.ready ? (device.simulated ? '模拟挂件已连接' : '真实挂件已连接') : '尚未连接设备'}}</text>
-        <text class="status-copy">{{device.ready ? ('BLE ' + device.protocolMajor + '.' + device.protocolMinor + ' · ' + (device.chargingState === 1 ? '充电中 ' : (device.chargingState === 2 ? '已充满 ' : '电量 ')) + (device.battery === null ? '--' : device.battery) + '%') : '加载模拟挂件后即可测试社交闭环'}}</text>
+        <text class="status-copy">{{device.ready ? ('BLE ' + device.protocolMajor + '.' + device.protocolMinor + ' · 电量 ' + (device.battery === null ? '--' : device.battery) + '%') : '加载模拟挂件后即可测试社交闭环'}}</text>
       </view>
     </view>
     <view wx:if="{{device.connected}}" class="detail-grid">
