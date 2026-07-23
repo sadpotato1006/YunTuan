@@ -96,6 +96,20 @@ const socialChatCache = require("../miniprogram/services/social-chat-cache");
   assert.match(partnersView, /item\.profile\.avatarFallback/);
   assert.match(partnersView, /binderror="handleInboxAvatarError"/);
 
+  const encountersPage = fs.readFileSync(
+    path.join(__dirname, "..", "miniprogram", "pages", "encounters", "encounters.js"),
+    "utf8"
+  );
+  const encountersView = fs.readFileSync(
+    path.join(__dirname, "..", "miniprogram", "pages", "encounters", "encounters.wxml"),
+    "utf8"
+  );
+  assert.match(encountersPage, /require\("\.\.\/\.\.\/services\/social-avatar"\)/);
+  assert.match(encountersPage, /resolveDisplayProfile\(profileValue/);
+  assert.match(encountersView, /item\.profile\.avatarDisplayUrl/);
+  assert.match(encountersView, /item\.profile\.avatarFallback/);
+  assert.match(encountersView, /binderror="handleAvatarError"/);
+
   console.log("social avatar display tests passed");
 })().catch(error => {
   console.error(error);

@@ -1,9 +1,10 @@
 const socialService = require("../../services/social");
 const socialAvatar = require("../../services/social-avatar");
+const socialInboxCache = require("../../services/social-inbox-cache");
 const deviceService = require("../../services/device");
 const tabSwipe = require("../../utils/tab-swipe");
-const ACTIVE_REFRESH_MS = 15000;
-const MAX_REFRESH_MS = 60000;
+const ACTIVE_REFRESH_MS = socialInboxCache.CACHE_FRESH_MS;
+const MAX_REFRESH_MS = 5 * 60 * 1000;
 
 Page({
   data: {
@@ -31,12 +32,16 @@ Page({
     this._refreshDelay = ACTIVE_REFRESH_MS;
     this.setForegroundView("partners");
     this.stopRefreshTimer();
-    this.loadInbox().finally(() => this.scheduleRefresh(ACTIVE_REFRESH_MS));
+    const cachedInbox = this.restoreInboxCache();
+    const initialSync = socialInboxCache.isFresh(cachedInbox)
+      ? Promise.resolve(false)
+      : this.loadInbox(Boolean(cachedInbox), { force: true });
+    initialSync.finally(() => this.scheduleRefresh(ACTIVE_REFRESH_MS));
   },
 
   onHide() { this.leavePage(); },
   onUnload() { this.leavePage(); },
-  onPullDownRefresh() { this.loadInbox(); },
+  onPullDownRefresh() { this.loadInbox(false, { force: true }); },
   onTabSwipeStart(event) { tabSwipe.start(this, event); },
   onTabSwipeMove(event) { tabSwipe.move(this, event, "/pages/partners/partners"); },
   onTabSwipeEnd(event) { tabSwipe.end(this, event, "/pages/partners/partners"); },
@@ -51,7 +56,7 @@ Page({
     this.stopRefreshTimer();
     if (!this._pageActive) return;
     this._refreshTimer = setTimeout(async () => {
-      const changed = await this.loadInbox(true);
+      const changed = await this.loadInbox(true, { force: true });
       this._refreshDelay = changed
         ? ACTIVE_REFRESH_MS
         : Math.min(MAX_REFRESH_MS, Math.max(ACTIVE_REFRESH_MS, this._refreshDelay * 2));
@@ -75,12 +80,63 @@ Page({
     }
   },
 
+  restoreInboxCache() {
+    const cached = socialInboxCache.readInbox();
+    if (!cached) return null;
+    const greetings = decorateItems(cached.greetings, "createdAt");
+    const matches = decorateMatches(cached.matches);
+    const blockedUsers = decorateItems(cached.blockedUsers, "blockedAt");
+    const pagination = cached.pagination || {};
+    const friends = pagination.friends || {};
+    const greetingPage = pagination.greetings || {};
+    this.setData({
+      greetings,
+      matches,
+      blockedUsers,
+      friendHasMore: friends.hasMore === true,
+      friendCursor: String(friends.nextCursor || ""),
+      greetingHasMore: greetingPage.hasMore === true,
+      greetingCursor: String(greetingPage.nextCursor || ""),
+      loading: false
+    });
+    this.resolveInboxAvatars({ greetings, matches, blockedUsers });
+    updateBadge(greetings, matches);
+    return cached;
+  },
+
+  persistInboxCache(syncedAt) {
+    const previous = socialInboxCache.readInbox();
+    socialInboxCache.writeInbox({
+      greetings: this.data.greetings,
+      matches: this.data.matches,
+      blockedUsers: this.data.blockedUsers,
+      pagination: {
+        friends: {
+          hasMore: this.data.friendHasMore === true,
+          nextCursor: String(this.data.friendCursor || "")
+        },
+        greetings: {
+          hasMore: this.data.greetingHasMore === true,
+          nextCursor: String(this.data.greetingCursor || "")
+        }
+      },
+      syncedAt: Math.max(0, Number(syncedAt) || Number(previous && previous.syncedAt) || 0)
+    });
+  },
+
   async loadInbox(silent, options) {
-    if (this._loadingInbox) return false;
-    this._loadingInbox = true;
     const source = options && typeof options === "object" ? options : {};
     const section = String(source.section || "all");
     const append = source.append === true;
+    if (!source.force && !append && section === "all") {
+      const cached = this.restoreInboxCache();
+      if (socialInboxCache.isFresh(cached)) {
+        wx.stopPullDownRefresh();
+        return false;
+      }
+    }
+    if (this._loadingInbox) return false;
+    this._loadingInbox = true;
     const beforeSignature = inboxSignature(this.data.greetings, this.data.matches);
     try {
       const blockedUsersRequest = silent
@@ -127,6 +183,7 @@ Page({
         paginationData.greetingCursor = String(greetingPage.nextCursor || "");
       }
       this.setData(Object.assign({ greetings, matches, blockedUsers, loading: false }, paginationData));
+      this.persistInboxCache(Date.now());
       this.resolveInboxAvatars({ greetings, matches, blockedUsers });
       updateBadge(greetings, matches);
       return beforeSignature !== inboxSignature(freshGreetings, freshMatches);
@@ -233,15 +290,27 @@ Page({
     if (!greetingId || this.data.operatingId) return;
     this.setData({ operatingId: greetingId });
     try {
-      await socialService.respondGreeting(greetingId, accept);
+      const response = await socialService.respondGreeting(greetingId, accept);
       wx.showToast({
         title: accept ? "你们已经互相认识啦" : "已忽略这条招呼",
         icon: accept ? "success" : "none"
       });
-      this.setData({
-        greetings: this.data.greetings.filter(item => item.greetingId !== greetingId)
-      });
-      await this.loadInbox(true);
+      const greetings = this.data.greetings.filter(item => item.greetingId !== greetingId);
+      let matches = this.data.matches;
+      if (accept && response && response.conversationId && response.profile) {
+        const acceptedMatch = decorateMatches([{
+          conversationId: response.conversationId,
+          matchedAt: Date.now(),
+          activityAt: Date.now(),
+          newMatch: true,
+          unreadCount: 0,
+          profile: response.profile
+        }]);
+        matches = decorateMatches(mergeUnique(acceptedMatch, matches, "conversationId"));
+      }
+      this.setData({ greetings, matches });
+      this.persistInboxCache();
+      updateBadge(greetings, matches);
       this._refreshDelay = ACTIVE_REFRESH_MS;
       this.scheduleRefresh(ACTIVE_REFRESH_MS);
     } catch (error) {
@@ -289,7 +358,10 @@ Page({
     try {
       await socialService.unblockUser(blockId);
       wx.showToast({ title: "已解除屏蔽", icon: "success" });
-      await this.loadInbox(true);
+      this.setData({
+        blockedUsers: this.data.blockedUsers.filter(item => item.blockId !== blockId)
+      });
+      this.persistInboxCache();
     } catch (error) {
       wx.showToast({ title: error.message || "解除屏蔽失败", icon: "none" });
     } finally {

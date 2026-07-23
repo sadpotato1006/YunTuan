@@ -1,6 +1,7 @@
 const deviceService = require("../../services/device");
 const socialService = require("../../services/social");
 const encounterStore = require("../../services/social-encounters");
+const socialAvatar = require("../../services/social-avatar");
 
 Page({
   data: {
@@ -13,9 +14,61 @@ Page({
 
   loadRecords() {
     const records = deviceService.getEncounterRecords().map(record => Object.assign({}, record, {
+      profile: record.profile ? socialAvatar.toDisplayProfile(record.profile) : null,
+      avatarFailed: false,
+      avatarRefreshAttempted: false,
       timeText: formatTime(record.occurredAt, record.timeEstimated)
     }));
     this.setData({ records, loading: false });
+    records.forEach(record => {
+      if (record.profile && record.profile.avatarType === "custom") {
+        this.resolveAvatar(record.encounterId, record.profile);
+      }
+    });
+  },
+
+  async resolveAvatar(encounterId, profileValue, force) {
+    const expectedValue = String(profileValue && profileValue.avatarValue || "");
+    if (!encounterId || !expectedValue) return;
+    try {
+      const profile = await socialAvatar.resolveDisplayProfile(profileValue, { force: force === true });
+      this.updateAvatar(encounterId, expectedValue, {
+        avatarDisplayUrl: profile.avatarDisplayUrl,
+        avatarFallback: profile.avatarFallback,
+        avatarFailed: false
+      });
+    } catch (error) {
+      console.warn("相遇记录头像地址解析失败：", error && error.message);
+      this.updateAvatar(encounterId, expectedValue, { avatarFailed: true });
+    }
+  },
+
+  updateAvatar(encounterId, expectedValue, values) {
+    const index = this.data.records.findIndex(record => record.encounterId === encounterId);
+    const current = index >= 0 ? this.data.records[index] : null;
+    if (!current || String(current.profile && current.profile.avatarValue || "") !== expectedValue) return;
+    const updates = {};
+    if (Object.prototype.hasOwnProperty.call(values, "avatarDisplayUrl")) {
+      updates[`records[${index}].profile.avatarDisplayUrl`] = values.avatarDisplayUrl;
+    }
+    if (Object.prototype.hasOwnProperty.call(values, "avatarFallback")) {
+      updates[`records[${index}].profile.avatarFallback`] = values.avatarFallback;
+    }
+    updates[`records[${index}].avatarFailed`] = values.avatarFailed === true;
+    this.setData(updates);
+  },
+
+  handleAvatarError(event) {
+    const encounterId = String(event.currentTarget.dataset.id || "");
+    const record = this.data.records.find(item => item.encounterId === encounterId);
+    const profile = record && record.profile;
+    if (!profile) return;
+    if (socialAvatar.isCloudFileId(profile.avatarValue) && !record.avatarRefreshAttempted) {
+      this.setData({ [`records[${this.data.records.indexOf(record)}].avatarRefreshAttempted`]: true });
+      this.resolveAvatar(encounterId, profile, true);
+      return;
+    }
+    this.updateAvatar(encounterId, String(profile.avatarValue || ""), { avatarFailed: true });
   },
 
   async retryProfile(event) {
@@ -57,9 +110,7 @@ Page({
     } finally {
       this.setData({ operatingId: "" });
     }
-  },
-
-  goInbox() { wx.switchTab({ url: "/pages/partners/partners" }); }
+  }
 });
 
 function formatTime(timestamp, estimated) {

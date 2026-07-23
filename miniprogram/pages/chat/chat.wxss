@@ -24,8 +24,6 @@
 .send-btn { width: 142rpx; min-height: 84rpx; margin: 0; padding: 0; border-radius: 20rpx; background: #52796f !important; color: #fff !important; font-size: 31rpx; display: flex; align-items: center; justify-content: center; }
 .send-btn[disabled] { background: #b5c3be !important; color: #f5f6f5 !important; }
 .send-btn::after { border: 0; }
-.divider { display: flex; align-items: center; justify-content: center; margin: 18rpx 0 12rpx; color: #9aa5a1; font-size: 25rpx; }
-.divider::before, .divider::after { content: ""; width: 90rpx; height: 1rpx; margin: 0 18rpx; background: #e5e9e6; }
 .voice-hint { display: block; color: #71807b; margin-bottom: 18rpx; font-size: 28rpx; }
 .voice-btn { min-height: 100rpx; border-radius: 50rpx; background: #52796f !important; color: #fff !important; font-size: 34rpx; }
 .voice-btn.listening { background: #d07a68 !important; }

@@ -1,8 +1,7 @@
 .encounter-page { padding-bottom: calc(80rpx + env(safe-area-inset-bottom)); }
 .page-heading { margin: 12rpx 4rpx 26rpx; }
 .page-heading .muted { display: block; margin-top: 14rpx; font-size: 30rpx; line-height: 1.55; }
-.inbox-entry { width: 100%; min-height: 96rpx; margin: 0 0 26rpx; border-radius: 22rpx; background: #e7efe9 !important; color: #365f55 !important; font-size: 32rpx; font-weight: 650; }
-.inbox-entry::after, .greeting-btn::after, .retry-btn::after { border: 0; }
+.greeting-btn::after, .retry-btn::after { border: 0; }
 .encounter-record { display: flex; align-items: flex-start; gap: 20rpx; }
 .avatar, .fallback-icon { width: 100rpx; height: 100rpx; flex: 0 0 100rpx; border-radius: 50%; }
 .virtual-avatar, .fallback-icon { display: flex; align-items: center; justify-content: center; font-size: 46rpx; }
@@ -22,5 +21,4 @@
 .greeting-btn.done, .greeting-btn[disabled] { background: #e2e9e5 !important; color: #71807b !important; }
 .retry-btn { background: #edf3ef !important; color: #52796f !important; }
 .quiet-tip { display: block; margin-top: 18rpx; color: #718079; font-size: 28rpx; line-height: 1.5; }
-.known-tip { display: block; margin-top: 18rpx; color: #52796f; font-size: 28rpx; font-weight: 650; }
 .empty-icon { width: 76rpx; height: 76rpx; margin: 0 auto 18rpx; border-radius: 50%; background: #fff1cf; color: #9a722b; display: flex; align-items: center; justify-content: center; }

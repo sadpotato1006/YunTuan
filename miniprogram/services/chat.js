@@ -15,6 +15,7 @@ const SPEECH_PROTECTION_RETRY_DELAYS_MS = [150, 400];
 const SAVE_DEBOUNCE_MS = 600;
 let pendingMessages = null;
 let saveTimer = null;
+const messageListeners = new Set();
 
 // service 统一选择后端，页面不需要感知 mock、云函数或自建服务器。
 function getMessages() {
@@ -403,7 +404,20 @@ function saveMessages(messages) {
   saveTimer = null;
   pendingMessages = null;
   // 限制本地记录数量，避免长期使用导致缓存无限增长。
-  wx.setStorageSync(CHAT_HISTORY_KEY, messages.slice(-MAX_LOCAL_MESSAGES));
+  const savedMessages = messages.slice(-MAX_LOCAL_MESSAGES);
+  wx.setStorageSync(CHAT_HISTORY_KEY, savedMessages);
+  notifyMessages(savedMessages);
+}
+
+function subscribeMessages(listener) {
+  if (typeof listener !== "function") throw new Error("聊天记录监听器必须是函数");
+  messageListeners.add(listener);
+  return () => messageListeners.delete(listener);
+}
+
+function notifyMessages(messages) {
+  const snapshot = Array.isArray(messages) ? messages.slice() : [];
+  messageListeners.forEach(listener => listener(snapshot));
 }
 
 function scheduleSaveMessages(messages) {
@@ -434,7 +448,9 @@ async function clearMessages() {
   if (typeof wx !== "undefined" && typeof wx.removeStorageSync === "function") {
     wx.removeStorageSync(CHAT_HISTORY_KEY);
   }
-  return mock.getMessages();
+  const result = await mock.getMessages();
+  notifyMessages(result.data && result.data.messages || []);
+  return result;
 }
 
 module.exports = {
@@ -449,6 +465,7 @@ module.exports = {
   splitSpeechText,
   buildContext,
   createRequestId,
+  subscribeMessages,
   saveMessages,
   scheduleSaveMessages,
   flushMessages,

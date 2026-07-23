@@ -1,0 +1,38 @@
+<view class="page more-page">
+  <view class="title page-title">更多</view>
+
+  <view class="section-heading">
+    <text>硬件设置</text>
+    <text class="connection-state {{device.ready ? 'online' : ''}}">{{device.ready ? '已连接' : '未连接'}}</text>
+  </view>
+  <view class="card hardware-settings-card">
+    <view class="setting-row">
+      <text class="setting-title">社交模式</text>
+      <switch checked="{{device.socialMode}}" disabled="{{!device.ready || operating}}" color="#52796F" bindchange="toggleSocialMode" />
+    </view>
+    <view class="setting-row">
+      <text class="setting-title">震动反馈</text>
+      <switch checked="{{settings.vibration}}" disabled="{{!device.ready || settingSaving}}" color="#52796F" data-key="vibration" bindchange="updateAlertSetting" />
+    </view>
+  </view>
+
+  <view class="card more-list-card">
+    <view class="more-row" bindtap="togglePrivateTools">
+      <view class="row-icon">隐</view>
+      <text class="row-title">隐私与数据</text>
+      <text class="row-action">{{showPrivateTools ? '收起' : '展开'}} {{showPrivateTools ? '⌃' : '⌄'}}</text>
+    </view>
+    <view wx:if="{{showPrivateTools}}" class="private-tools">
+      <view class="private-tool-item" bindtap="showPrivacy"><text>隐私说明</text><text>›</text></view>
+      <view class="private-tool-item" bindtap="showAbout"><text>关于云团</text><text>›</text></view>
+      <view class="private-tool-item" bindtap="clearLocalData"><text>清除本机缓存</text><text>›</text></view>
+      <view class="private-tool-item danger-tool" bindtap="deleteCloudData"><text>{{deletingCloudData ? '正在删除个人数据…' : '删除全部个人数据'}}</text><text>›</text></view>
+    </view>
+
+    <view class="more-row developer-row" bindtap="goDeveloperTools">
+      <view class="row-icon">工</view>
+      <text class="row-title">开发者工具</text>
+      <text class="entry-arrow">›</text>
+    </view>
+  </view>
+</view>

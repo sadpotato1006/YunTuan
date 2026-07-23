@@ -3,8 +3,6 @@
     <view class="title">最近遇见</view>
     <text class="muted">汇总最近 30 次相遇，同一个人只显示一次</text>
   </view>
-  <button class="inbox-entry" bindtap="goInbox">查看收到的招呼与已认识伙伴</button>
-
   <view wx:if="{{loading}}" class="loading">正在整理相遇记录…</view>
   <view wx:elif="{{!records.length}}" class="empty card">
     <view class="empty-icon">遇</view>
@@ -14,8 +12,8 @@
 
   <view wx:for="{{records}}" wx:key="encounterId" class="encounter-record card">
     <block wx:if="{{item.profile}}">
-      <image wx:if="{{item.profile.avatarType === 'custom'}}" class="avatar" src="{{item.profile.avatarValue}}" mode="aspectFill" />
-      <view wx:else class="avatar virtual-avatar" style="background: {{item.profile.avatarColor}}">{{item.profile.avatarValue}}</view>
+      <image wx:if="{{item.profile.avatarType === 'custom' && item.profile.avatarDisplayUrl && !item.avatarFailed}}" class="avatar" src="{{item.profile.avatarDisplayUrl}}" mode="aspectFill" data-id="{{item.encounterId}}" binderror="handleAvatarError" />
+      <view wx:else class="avatar virtual-avatar" style="background: {{item.profile.avatarColor}}">{{item.profile.avatarType === 'custom' ? item.profile.avatarFallback : item.profile.avatarValue}}</view>
       <view class="record-main">
         <view class="name-row">
           <text class="name">{{item.profile.nickname}}</text>
@@ -41,9 +39,8 @@
           <block wx:elif="{{item.greetingStatus === 'declined'}}">对方暂未接受</block>
           <block wx:else>打个招呼</block>
         </button>
-        <text wx:elif="{{item.alreadyKnown}}" class="known-tip">已经是伙伴，本次只记录相遇</text>
-        <text wx:elif="{{item.profile.intention === 'quiet'}}" class="quiet-tip">对方当前暂不接收招呼</text>
-        <text wx:else class="quiet-tip">本次互动期限已过</text>
+        <text wx:elif="{{!item.alreadyKnown && item.profile.intention === 'quiet'}}" class="quiet-tip">对方当前暂不接收招呼</text>
+        <text wx:elif="{{!item.alreadyKnown}}" class="quiet-tip">本次互动期限已过</text>
       </view>
     </block>
     <block wx:else>

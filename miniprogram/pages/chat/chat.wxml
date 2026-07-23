@@ -38,7 +38,6 @@
         bindtap="sendTextMessage"
       >发送</button>
     </view>
-    <view class="divider"><text>或者</text></view>
     <view wx:if="{{hardwareVoiceSupported || hardwarePlaybackSupported}}" class="hardware-status">
       <view wx:if="{{hardwareVoiceSupported}}" class="hardware-status-item {{hardwareVoiceHasError ? 'error' : (hardwareVoiceActive ? 'active' : (hardwareVoiceReady ? 'ready' : 'offline'))}}">
         <view class="hardware-status-dot"></view>

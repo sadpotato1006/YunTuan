@@ -91,7 +91,10 @@ assert.doesNotMatch(pageWxml, /当前社交意愿/);
 assert.doesNotMatch(pageWxml, /selectIntention/);
 assert.doesNotMatch(pageWxml, /intentionLabel/);
 assert.match(pageWxml, /私密分享资料/);
-assert.match(pageWxml, /只保存在本机/);
+assert.match(pageWxml, /私密资料不会上传云端/);
+assert.doesNotMatch(pageWxml, /只展示你主动填写的公开资料/);
+assert.doesNotMatch(pageWxml, /也可以使用虚拟形象/);
+assert.doesNotMatch(pageWxml, /最多选择 3 个/);
 
 const deviceWxml = fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "pages", "device", "device.wxml"),
@@ -102,8 +105,9 @@ assert.match(deviceWxml, /socialProfile\.nickname/);
 assert.match(deviceWxml, /编辑个人名片/);
 assert.match(deviceWxml, /bindtap="goSocialProfile"/);
 assert.match(deviceWxml, /class="profile-edit-button"/);
-assert.match(deviceWxml, /socialProfile\.bio/);
-assert.match(deviceWxml, /socialProfile\.intentionLabel/);
+assert.doesNotMatch(deviceWxml, /socialProfile\.bio/);
+assert.doesNotMatch(deviceWxml, /socialProfile\.intentionLabel/);
+assert.doesNotMatch(deviceWxml, /class="device-name"/);
 assert.match(deviceWxml, /wx:for="{{socialProfile\.tags}}"/);
 assert.doesNotMatch(deviceWxml, /class="profile-manage-button"/);
 assert.doesNotMatch(deviceWxml, /class="device-mark"/);
@@ -119,6 +123,8 @@ assert.match(encountersWxml, /打个招呼/);
 assert.match(encountersWxml, /汇总最近 30 次相遇/);
 assert.match(encountersWxml, /相遇 \{\{item\.encounterCount\}\} 次/);
 assert.match(encountersWxml, /!item\.alreadyKnown/);
+assert.match(encountersWxml, /item\.profile\.avatarDisplayUrl/);
+assert.match(encountersWxml, /binderror="handleAvatarError"/);
 
 const partnersWxml = fs.readFileSync(
   path.join(__dirname, "..", "miniprogram", "pages", "partners", "partners.wxml"),

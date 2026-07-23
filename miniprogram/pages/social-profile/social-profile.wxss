@@ -1,5 +1,4 @@
 .profile-page { padding-bottom: 80rpx; }
-.page-intro { display: block; margin: 12rpx 0 28rpx; color: #71807b; font-size: 27rpx; line-height: 1.65; }
 .form-card { padding: 30rpx; }
 .avatar-editor { display: flex; align-items: center; gap: 24rpx; }
 .current-avatar, .preview-avatar { width: 128rpx; height: 128rpx; flex: 0 0 128rpx; border-radius: 50%; }
@@ -7,7 +6,7 @@
 .choose-avatar-btn { flex: 1; min-height: 78rpx; margin: 0; border-radius: 18rpx; background: #e7efe9 !important; color: #365f55 !important; font-size: 29rpx; }
 .choose-avatar-btn::after, .add-tag-btn::after { border: 0; }
 .field-tip { display: block; margin: 18rpx 0 14rpx; color: #83908b; font-size: 25rpx; }
-.avatar-options { display: flex; flex-wrap: wrap; gap: 16rpx; }
+.avatar-options { display: flex; flex-wrap: wrap; gap: 16rpx; margin-top: 20rpx; }
 .avatar-option { width: 72rpx; height: 72rpx; border: 4rpx solid transparent; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 36rpx; box-sizing: border-box; }
 .avatar-option.selected { border-color: #52796f; transform: scale(1.06); }
 .field-block + .field-block { margin-top: 30rpx; }
@@ -18,6 +17,7 @@
 .bio-input { width: 100%; height: 168rpx; margin-top: 14rpx; padding: 20rpx 22rpx; line-height: 1.5; }
 .compact-title { margin-bottom: 0; }
 .tag-options, .selected-tags, .preview-tags { display: flex; flex-wrap: wrap; gap: 14rpx; }
+.tag-options { margin-top: 20rpx; }
 .tag-option { padding: 13rpx 22rpx; border-radius: 28rpx; background: #f0f3f1; color: #65736e; font-size: 27rpx; }
 .tag-option.selected { background: #dcebe2; color: #365f55; font-weight: 600; }
 .custom-tag-row { display: flex; gap: 14rpx; margin-top: 20rpx; }

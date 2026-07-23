@@ -1,108 +1,45 @@
 const assert = require("assert");
-const Module = require("module");
+const fs = require("fs");
+const path = require("path");
 
-let pageDefinition = null;
-let recognitionCancels = 0;
-let playbackCancels = 0;
-let removedFiles = 0;
-let readyMarks = 0;
+const root = path.resolve(__dirname, "..");
+const pageSource = fs.readFileSync(
+  path.join(root, "miniprogram/pages/chat/chat.js"),
+  "utf8"
+);
+const appSource = fs.readFileSync(path.join(root, "miniprogram/app.js"), "utf8");
 
-const chatServiceStub = {
-  createRequestId() { return "request-1"; }
-};
-const audioServiceStub = {
-  cancelRecognition() { recognitionCancels += 1; },
-  removeFile() { removedFiles += 1; },
-  markReady() { readyMarks += 1; }
-};
-const ttsServiceStub = {
-  cancel() { playbackCancels += 1; return Promise.resolve(true); }
-};
+assert.ok(
+  appSource.includes('require("./services/hardware-ai-chat")'),
+  "小程序生命周期应加载全局挂件 AI 对话服务"
+);
+assert.ok(
+  appSource.includes("hardwareAiChatService.setForeground(true)"),
+  "小程序进入前台时应启用挂件 AI 对话"
+);
+assert.ok(
+  appSource.includes("hardwareAiChatService.setForeground(false)"),
+  "小程序退到后台时应更新可见状态，但不应直接销毁全局服务"
+);
+const hardwareServiceSource = fs.readFileSync(
+  path.join(root, "miniprogram/services/hardware-ai-chat.js"),
+  "utf8"
+);
+assert.ok(
+  hardwareServiceSource.includes("return foreground || hasEnteredForeground"),
+  "小程序进入过前台后，应在微信允许的后台运行窗口内继续挂件 AI 对话"
+);
+assert.ok(
+  pageSource.includes('require("../../services/hardware-ai-chat")'),
+  "聊天页应只订阅全局挂件 AI 对话状态"
+);
+assert.ok(
+  !pageSource.includes("deviceAudioService.subscribeCompleted"),
+  "聊天页不应再次订阅完整录音，避免同一段语音被处理两次"
+);
+assert.ok(
+  !pageSource.includes("enqueueHardwareRecording"),
+  "挂件录音队列不应再依赖聊天页是否打开"
+);
 
-const originalLoad = Module._load;
-Module._load = function load(request, parent, isMain) {
-  if (parent && /pages[\\/]chat[\\/]chat\.js$/.test(parent.filename)) {
-    if (request === "../../services/chat") return chatServiceStub;
-    if (request === "../../services/yuntuan-audio") return audioServiceStub;
-    if (request === "../../services/yuntuan-tts") return ttsServiceStub;
-    if (request === "../../services/diagnostics") return { record() {} };
-    if (request === "./voice-latency") return { buildVoiceLatencyMetrics() { return {}; } };
-    if (request === "./stream-reply-renderer") return { createStreamReplyRenderer() { return {}; } };
-    if (request === "./streaming-speech-queue") return { createStreamingSpeechQueue() { return null; } };
-  }
-  return originalLoad.call(this, request, parent, isMain);
-};
-
-global.Page = definition => { pageDefinition = definition; };
-global.wx = { showToast() {} };
-require("../miniprogram/pages/chat/chat");
-Module._load = originalLoad;
-
-function createPage() {
-  const page = Object.assign({}, pageDefinition);
-  page.data = Object.assign({}, pageDefinition.data, { loading: false });
-  page._hardwareVoiceQueue = [];
-  page._pageActive = false;
-  page.setData = function setData(patch) {
-    this.data = Object.assign({}, this.data, patch);
-  };
-  return page;
-}
-
-function waitForTurn() {
-  return new Promise(resolve => setImmediate(resolve));
-}
-
-(async () => {
-  const page = createPage();
-  let sentMessages = 0;
-  page.sendMessage = async () => { sentMessages += 1; };
-  page.enqueueHardwareRecording({
-    sessionId: 1,
-    filePath: "hidden.wav",
-    realtimeTranscriptPromise: Promise.resolve("返回页面后处理")
-  });
-
-  assert.strictEqual(recognitionCancels, 1, "页面隐藏时应停止实时识别");
-  assert.strictEqual(page._hardwareVoiceQueue.length, 1, "隐藏期间的完整录音应留在队列中");
-  assert.strictEqual(sentMessages, 0, "页面隐藏时不应请求 AI");
-
-  page.onShow();
-  await waitForTurn();
-  await waitForTurn();
-  assert.strictEqual(sentMessages, 1, "返回聊天页后应恢复处理队列");
-  assert.strictEqual(removedFiles, 1);
-  assert.strictEqual(readyMarks, 1);
-
-  let resolveTranscript;
-  const inFlightTranscript = new Promise(resolve => { resolveTranscript = resolve; });
-  page._pageActive = true;
-  page._hardwareVoiceQueue.push({
-    sessionId: 2,
-    filePath: "in-flight.wav",
-    realtimeTranscriptPromise: inFlightTranscript
-  });
-  const processing = page.processHardwareVoiceQueue();
-  await waitForTurn();
-  page.onHide();
-  resolveTranscript("隐藏后不应发送");
-  await processing;
-
-  assert.strictEqual(sentMessages, 1, "隐藏页面后，正在识别的录音不得继续请求 AI");
-  assert.strictEqual(recognitionCancels, 2);
-  assert.strictEqual(playbackCancels, 1, "隐藏页面后应停止挂件朗读");
-
-  let aborted = 0;
-  page._processingHardwareVoice = true;
-  page._activeHardwareRecording = { sessionId: 3 };
-  page.data.generating = true;
-  page._activeChatRequest = { abort() { aborted += 1; } };
-  page.onHide();
-  assert.strictEqual(aborted, 1, "隐藏页面后应中止挂件触发的流式 AI 请求");
-  assert.strictEqual(page._generationCancelled, true);
-
-  console.log("chat page visibility tests passed");
-})().catch(error => {
-  console.error(error);
-  process.exitCode = 1;
-});
+console.log("chat page visibility tests passed");

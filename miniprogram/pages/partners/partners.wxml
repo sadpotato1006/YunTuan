@@ -3,14 +3,12 @@
     <view class="title">伙伴</view>
   </view>
 
-  <view class="ai-companion-card card" bindtap="openAiChat">
-    <view class="ai-companion-avatar">云</view>
+  <view class="ai-companion-card card" aria-role="button" aria-label="开始和云团 AI 聊天" bindtap="openAiChat">
+    <view class="ai-companion-avatar">AI</view>
     <view class="conversation-main">
-      <view class="conversation-title-row">
-        <text class="conversation-name">云团陪伴</text>
-      </view>
+      <text class="ai-chat-title">和云团 AI 聊天</text>
     </view>
-    <text class="ai-entry-arrow">›</text>
+    <view class="ai-chat-button">开始聊天</view>
   </view>
 
   <view class="encounter-entry card" bindtap="openEncounters">

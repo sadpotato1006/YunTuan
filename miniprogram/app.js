@@ -1,8 +1,11 @@
 const config = require("./config/index");
 const socialService = require("./services/social");
+const socialInboxCache = require("./services/social-inbox-cache");
+const hardwareAiChatService = require("./services/hardware-ai-chat");
 
 App({
   onLaunch() {
+    hardwareAiChatService.start();
     // Mock 和 HTTP 模式不初始化云开发，未创建云环境也能正常运行。
     if (!config.usesCloudBackend()) return;
     this._socialBadgePollingActive = true;
@@ -27,15 +30,25 @@ App({
   },
 
   onShow() {
+    hardwareAiChatService.setForeground(true);
     this.stopSocialBadgePolling();
     if (!config.usesCloudBackend()) return;
     this._socialBadgePollingActive = true;
     this._socialBadgeIdleRounds = 0;
     this._socialBadgeSignature = "";
-    this.scheduleSocialBadgeRefresh(1200);
+    const cachedInbox = socialInboxCache.readInbox();
+    if (cachedInbox) this.setSocialBadgeCount(socialInboxCache.badgeCount(cachedInbox));
+    const cacheAge = cachedInbox ? Date.now() - Number(cachedInbox.syncedAt || 0) : Infinity;
+    const nextRefreshDelay = socialInboxCache.isFresh(cachedInbox)
+      ? Math.max(1000, socialInboxCache.CACHE_FRESH_MS - cacheAge)
+      : 1200;
+    this.scheduleSocialBadgeRefresh(nextRefreshDelay);
   },
 
-  onHide() { this.stopSocialBadgePolling(); },
+  onHide() {
+    hardwareAiChatService.setForeground(false);
+    this.stopSocialBadgePolling();
+  },
 
   stopSocialBadgePolling() {
     this._socialBadgePollingActive = false;
@@ -50,7 +63,7 @@ App({
       await this.refreshSocialBadge();
       if (!this._socialBadgePollingActive) return;
       const idleRounds = Math.max(0, Number(this._socialBadgeIdleRounds) || 0);
-      const nextDelay = idleRounds >= 4 ? 5 * 60 * 1000 : (idleRounds >= 2 ? 2 * 60 * 1000 : 30000);
+      const nextDelay = idleRounds >= 4 ? 5 * 60 * 1000 : socialInboxCache.CACHE_FRESH_MS;
       this.scheduleSocialBadgeRefresh(nextDelay);
     }, Math.max(1000, Number(delay) || 30000));
   },
@@ -63,11 +76,8 @@ App({
       const inbox = await socialService.getSocialInbox();
       const greetings = Array.isArray(inbox.greetings) ? inbox.greetings : [];
       const matches = Array.isArray(inbox.matches) ? inbox.matches : [];
-      const count = greetings.length + matches.reduce((total, item) => {
-        const unread = Math.max(0, Number(item.unreadCount) || 0);
-        return total + unread + (item.newMatch && unread === 0 ? 1 : 0) +
-          (item.contactNotice && !item.newMatch ? 1 : 0);
-      }, 0);
+      socialInboxCache.mergeFirstPage(inbox, Date.now());
+      const count = socialInboxCache.badgeCount({ greetings, matches });
       const signature = `${count}:${greetings[0] && greetings[0].greetingId || ""}:${matches[0] && matches[0].conversationId || ""}`;
       this._socialBadgeIdleRounds = this._socialBadgeSignature && this._socialBadgeSignature === signature
         ? Math.min(10, (this._socialBadgeIdleRounds || 0) + 1)

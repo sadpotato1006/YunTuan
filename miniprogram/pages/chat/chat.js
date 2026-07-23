@@ -1,6 +1,7 @@
 const chatService = require("../../services/chat");
 const deviceAudioService = require("../../services/yuntuan-audio");
 const deviceTtsService = require("../../services/yuntuan-tts");
+const hardwareAiChatService = require("../../services/hardware-ai-chat");
 const diagnostics = require("../../services/diagnostics");
 const { buildVoiceLatencyMetrics } = require("./voice-latency");
 const { createStreamReplyRenderer } = require("./stream-reply-renderer");
@@ -23,12 +24,12 @@ Page({
     hardwarePlaybackSupported: false,
     hardwarePlaybackActive: false,
     hardwarePlaybackReady: false,
-    hardwarePlaybackHasError: false
+    hardwarePlaybackHasError: false,
+    hardwareConversationActive: false
   },
 
   onLoad() {
     this._pageActive = true;
-    this._hardwareVoiceQueue = [];
     this._unsubscribeHardwareVoiceState = deviceAudioService.subscribe(state => {
       if (this._pageUnloaded) return;
       const active = state.phase === "recording" || state.phase === "receiving" || state.phase === "decoding";
@@ -40,8 +41,21 @@ Page({
         hardwareVoiceHasError: hasError
       });
     });
-    this._unsubscribeHardwareVoiceCompleted = deviceAudioService.subscribeCompleted(recording => {
-      this.enqueueHardwareRecording(recording);
+    hardwareAiChatService.start();
+    this._unsubscribeHardwareAiChat = hardwareAiChatService.subscribe(state => {
+      if (this._pageUnloaded) return;
+      this.setData({
+        hardwareConversationActive: state.processing,
+        recognizing: state.recognizing,
+        thinking: state.thinking,
+        generating: state.recognizing || state.thinking || state.speaking,
+        speaking: state.speaking
+      });
+    });
+    this._unsubscribeChatMessages = chatService.subscribeMessages(messages => {
+      if (this._pageUnloaded) return;
+      this.setData({ messages, loading: false });
+      this.scrollToBottom();
     });
     this._unsubscribeHardwarePlayback = deviceTtsService.subscribe(state => {
       if (this._pageUnloaded) return;
@@ -66,22 +80,11 @@ Page({
 
   onShow() {
     this._pageActive = true;
-    this.processHardwareVoiceQueue();
   },
 
   onHide() {
     this._pageActive = false;
     this.stopVoiceRecognition(true);
-    if (this._processingHardwareVoice) {
-      this.setData({ recognizing: false });
-      if (this._activeHardwareRecording && typeof deviceAudioService.cancelRecognition === "function") {
-        deviceAudioService.cancelRecognition(this._activeHardwareRecording.sessionId, "聊天页面已隐藏");
-      }
-      if (this.data.generating) this.stopGeneration();
-      if (typeof deviceTtsService.cancel === "function") {
-        deviceTtsService.cancel("聊天页面已隐藏").catch(() => {});
-      }
-    }
   },
 
   onUnload() {
@@ -94,10 +97,9 @@ Page({
     this.stopVoiceRecognition(true);
     this.releaseVoiceRecorder();
     if (this._unsubscribeHardwareVoiceState) this._unsubscribeHardwareVoiceState();
-    if (this._unsubscribeHardwareVoiceCompleted) this._unsubscribeHardwareVoiceCompleted();
     if (this._unsubscribeHardwarePlayback) this._unsubscribeHardwarePlayback();
-    (this._hardwareVoiceQueue || []).forEach(item => deviceAudioService.removeFile(item.filePath));
-    this._hardwareVoiceQueue = [];
+    if (this._unsubscribeHardwareAiChat) this._unsubscribeHardwareAiChat();
+    if (this._unsubscribeChatMessages) this._unsubscribeChatMessages();
   },
 
   initVoiceRecorder() {
@@ -198,92 +200,6 @@ Page({
       });
     } finally {
       this._discardVoiceResult = false;
-      this.processHardwareVoiceQueue();
-    }
-  },
-
-  enqueueHardwareRecording(recording) {
-    const hasInlineAudio = recording &&
-      typeof recording.audioBase64 === "string" && Boolean(recording.audioBase64);
-    if (!recording || (!recording.filePath && !hasInlineAudio)) return;
-    if (this._pageUnloaded) {
-      deviceAudioService.removeFile(recording.filePath);
-      return;
-    }
-    this._hardwareVoiceQueue.push(recording);
-    if (!this._pageActive && typeof deviceAudioService.cancelRecognition === "function") {
-      deviceAudioService.cancelRecognition(recording.sessionId, "聊天页面当前不可见");
-    }
-    this.processHardwareVoiceQueue();
-  },
-
-  async processHardwareVoiceQueue() {
-    if (this._processingHardwareVoice || this._pageUnloaded || !this._pageActive) return;
-    if (!this._hardwareVoiceQueue || !this._hardwareVoiceQueue.length) return;
-    if (this.data.generating || this.data.speaking || this.data.listening || this.data.recognizing || this.data.loading) return;
-
-    const recording = this._hardwareVoiceQueue.shift();
-    const timing = recording.timing || {};
-    const voiceTrace = {
-      recordingStartedAt: timing.recordingStartedAt || Date.now() - (recording.durationMs || 0),
-      recordingFinishedAt: timing.recordingFinishedAt || timing.completedAt || 0,
-      audioReadyAt: timing.completedAt || Date.now(),
-      recordingMs: timing.recordingMs || recording.durationMs || 0,
-      bleUploadMs: timing.transferMs || 0,
-      bleMtu: timing.mtu || 0,
-      bleChunkPayload: timing.chunkPayload || 0,
-      blePacketCount: timing.totalChunks || 0,
-      bleEncodedBytes: timing.encodedBytes || 0
-    };
-    this._processingHardwareVoice = true;
-    this._activeHardwareRecording = recording;
-    this.setData({ recognizing: true });
-    try {
-      const asrStartedAt = Date.now();
-      let response;
-      if (recording.realtimeTranscriptPromise) {
-        try {
-          const text = await recording.realtimeTranscriptPromise;
-          response = { code: 0, message: "success", data: { text } };
-          voiceTrace.asrMode = "realtime";
-        } catch (realtimeError) {
-          console.warn("实时语音识别失败，改用完整录音识别：", realtimeError.message);
-        }
-      }
-      if (!this._pageActive || this._pageUnloaded) return;
-      if (!response) {
-        response = await chatService.transcribeAudio(
-          recording.filePath,
-          recording.voiceFormat || "wav",
-          recording.audioBase64
-        );
-        voiceTrace.asrMode = "sentence-fallback";
-      }
-      voiceTrace.asrMs = Date.now() - asrStartedAt;
-      if (!this._pageActive || this._pageUnloaded) return;
-      const content = response.data && typeof response.data.text === "string"
-        ? response.data.text.trim()
-        : "";
-      if (!content) throw new Error("没有听清，请再说一次");
-
-      this.setData({ recognizing: false, inputValue: "" });
-      await this.sendMessage(content, voiceTrace);
-    } catch (error) {
-      if (!this._pageUnloaded && this._pageActive) {
-        console.error("挂件语音转文字失败：", error);
-        this.setData({ recognizing: false });
-        wx.showToast({
-          title: error.message || "挂件语音识别失败，请重试",
-          icon: "none",
-          duration: 2800
-        });
-      }
-    } finally {
-      deviceAudioService.removeFile(recording.filePath);
-      deviceAudioService.markReady();
-      this._activeHardwareRecording = null;
-      this._processingHardwareVoice = false;
-      if (!this._pageUnloaded && this._pageActive) this.processHardwareVoiceQueue();
     }
   },
 
@@ -300,7 +216,6 @@ Page({
       );
       this.setData({ messages, loading: false });
       chatService.saveMessages(messages);
-      this.processHardwareVoiceQueue();
     } catch (error) {
       this.handleError(error);
     }
@@ -458,7 +373,6 @@ Page({
       this._activeChatRequest = null;
       if (!this._pageUnloaded) {
         this.setData({ generating: false, thinking: false, speaking: false, listening: false });
-        this.processHardwareVoiceQueue();
       }
     }
   },

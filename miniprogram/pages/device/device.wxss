@@ -10,16 +10,12 @@
 .device-owner-avatar { width: 96rpx; height: 96rpx; flex: 0 0 96rpx; border-radius: 50%; }
 .virtual-owner-avatar { display: flex; align-items: center; justify-content: center; font-size: 44rpx; }
 .owner-copy { flex: 1; min-width: 0; }
-.owner-nickname { display: block; overflow: hidden; font-size: 36rpx; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.device-name { display: block; margin-top: 8rpx; color: #66766f; font-size: 29rpx; }
+.owner-nickname { display: block; overflow: hidden; font-size: 40rpx; font-weight: 700; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .profile-edit-button { width: 120rpx; min-width: 120rpx; height: 72rpx; min-height: 72rpx; flex: 0 0 120rpx; margin: 0 0 0 auto; padding: 0; border: 1rpx solid rgba(77, 126, 112, .22); border-radius: 36rpx; background: #edf4f0 !important; color: #3e6f60 !important; font-size: 27rpx; font-weight: 700; line-height: 70rpx; transition: transform 140ms cubic-bezier(.2,.8,.2,1), background-color 160ms ease-out; }
 .profile-edit-button::after { border: 0; }
 .profile-edit-button:active { background: #e1ede7 !important; transform: scale(.97); }
-.profile-bio { display: block; margin-top: 24rpx; color: #53655e; font-size: 30rpx; line-height: 1.6; }
-.profile-meta { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 17rpx; }
-.profile-intention, .profile-tag { padding: 10rpx 18rpx; border-radius: 999rpx; font-size: 27rpx; line-height: 1.4; }
-.profile-intention { background: #e7f1ec; color: #326b56; }
-.profile-tag { background: #f5f2e9; color: #6f6449; }
+.profile-meta { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 22rpx; }
+.profile-tag { padding: 10rpx 18rpx; border-radius: 999rpx; background: #f5f2e9; color: #6f6449; font-size: 27rpx; line-height: 1.4; }
 .device-status-row { display: flex; align-items: center; justify-content: space-between; gap: 22rpx; margin-top: 28rpx; }
 .battery-number { flex: none; color: #426f63; font-size: 31rpx; font-weight: 700; }
 .battery-state-text { flex: none; color: #68766f; font-size: 28rpx; font-weight: 650; }
@@ -45,39 +41,18 @@
 .connect-btn { width: 150rpx; min-width: 0; min-height: 84rpx; flex: 0 0 150rpx; margin: 0; padding: 0; border-radius: 20rpx; background: #52796f !important; color: #fff !important; font-size: 31rpx; line-height: 84rpx; }
 .connect-btn::after { border: 0; }
 
-.core-controls-card { padding: 0 32rpx 32rpx; }
-.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 28rpx; min-height: 144rpx; border-bottom: 1rpx solid #e5ebe7; }
-.setting-row > view { flex: 1; min-width: 0; }
-.setting-row switch { flex: none; transform: scale(1.1); transform-origin: right center; }
-.control-title { display: block; font-size: 34rpx; font-weight: 700; }
-.control-tip { display: block; margin-top: 9rpx; color: #68766f; font-size: 28rpx; line-height: 1.5; }
-.device-action-row { display: flex; gap: 18rpx; margin-top: 28rpx; }
+.quick-actions-card { padding: 28rpx; }
+.device-action-row { display: flex; gap: 18rpx; }
 .device-action-row button { width: auto; min-width: 0; min-height: 96rpx; flex: 1 1 0; margin: 0; padding: 0 14rpx; border-radius: 22rpx; font-size: 29rpx; font-weight: 700; line-height: 96rpx; }
 .find-device-button { background: #e4eee8 !important; color: #315f52 !important; }
 .disconnect-device-button { background: #f3e9e6 !important; color: #8b4e46 !important; }
 .find-device-button::after, .disconnect-device-button::after { border: 0; }
 
-.account-tools-card { padding: 0 32rpx; }
-.account-tool-row { display: flex; min-height: 132rpx; align-items: center; gap: 20rpx; border-bottom: 1rpx solid #e7ece9; transition: transform 140ms cubic-bezier(.2,.8,.2,1); }
-.account-tool-row:active, .private-tool-item:active { transform: scale(.985); }
-.account-tool-icon { width: 78rpx; height: 78rpx; flex: 0 0 78rpx; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: #edf2ef; color: #52796f; font-size: 29rpx; font-weight: 700; }
-.account-tool-copy { flex: 1; min-width: 0; }
-.account-tool-title, .account-tool-tip { display: block; }
-.account-tool-title { font-size: 33rpx; font-weight: 700; }
-.account-tool-tip { overflow: hidden; margin-top: 8rpx; color: #68766f; font-size: 27rpx; text-overflow: ellipsis; white-space: nowrap; }
-.private-toggle-text { flex: none; color: #74817b; font-size: 26rpx; }
-.private-tools { padding: 4rpx 0 12rpx 98rpx; }
-.private-tool-item { display: flex; min-height: 98rpx; align-items: center; justify-content: space-between; color: #3e534c; font-size: 30rpx; border-bottom: 1rpx solid #e8edea; transition: transform 140ms cubic-bezier(.2,.8,.2,1); }
-.private-tool-item:last-child { border-bottom: 0; }
-.private-tool-item > text:last-child { color: #8a9590; font-size: 42rpx; }
-.danger-tool > text:first-child { color: #ad5146; }
-
-.developer-entry { display: flex; min-height: 104rpx; align-items: center; justify-content: space-between; gap: 20rpx; margin: 14rpx 8rpx 0; padding: 12rpx 22rpx; box-sizing: border-box; color: #6f7c76; transition: transform 140ms cubic-bezier(.2,.8,.2,1); }
-.developer-entry:active { transform: scale(.985); }
-.developer-entry view { flex: 1; min-width: 0; }
-.developer-entry-title, .developer-entry-tip { display: block; }
-.developer-entry-title { font-size: 28rpx; font-weight: 650; }
-.developer-entry-tip { margin-top: 6rpx; font-size: 24rpx; line-height: 1.4; }
+.more-entry { display: flex; min-height: 116rpx; align-items: center; gap: 22rpx; padding: 22rpx 30rpx; transition: transform 140ms cubic-bezier(.2,.8,.2,1); }
+.more-entry:active { transform: scale(.985); }
+.more-entry-icon { display: flex; width: 72rpx; height: 72rpx; flex: 0 0 72rpx; align-items: center; justify-content: center; gap: 6rpx; border-radius: 50%; background: #e9f0ec; }
+.more-dot { width: 8rpx; height: 8rpx; flex: 0 0 8rpx; border-radius: 50%; background: #426f62; }
+.more-entry-title { flex: 1; font-size: 34rpx; font-weight: 700; }
 .entry-arrow { flex: none; color: #89948f; font-size: 48rpx; }
 
 .find-device-button, .disconnect-device-button, .connect-btn { transition: transform 140ms cubic-bezier(.2,.8,.2,1), background-color 160ms ease-out; }

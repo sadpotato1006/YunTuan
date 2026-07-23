@@ -1,6 +1,5 @@
 <view class="page profile-page">
   <view class="title">我的社交名片</view>
-  <text class="page-intro">只展示你主动填写的公开资料，不包含真实姓名、联系方式、位置和设备身份。</text>
 
   <view class="card form-card">
     <view class="section-title">头像</view>
@@ -9,7 +8,6 @@
       <view wx:else class="current-avatar virtual-avatar" style="background: {{profile.avatarColor}}">{{profile.avatarValue}}</view>
       <button class="choose-avatar-btn" open-type="chooseAvatar" bindchooseavatar="chooseAvatar">选择微信头像</button>
     </view>
-    <text class="field-tip">也可以使用虚拟形象</text>
     <view class="avatar-options">
       <view
         wx:for="{{virtualAvatars}}"
@@ -35,7 +33,6 @@
 
   <view class="card form-card">
     <view class="field-header"><text class="section-title compact-title">兴趣标签</text><text>{{profile.tags.length}}/3</text></view>
-    <text class="field-tip">最多选择 3 个，更方便找到聊得来的伙伴</text>
     <view class="tag-options">
       <view
         wx:for="{{tagOptions}}"
@@ -59,7 +56,7 @@
       <text class="section-title compact-title">私密分享资料</text>
       <text>{{profile.contactOptions.length}}/8</text>
     </view>
-    <text class="field-tip">这些预设只保存在本机，不会随名片上传云端。双方同意后，你仍需主动选择要分享的条目。</text>
+    <text class="field-tip">私密资料不会上传云端</text>
     <view class="contact-add-row">
       <button data-type="wechat" bindtap="addContactOption">＋ 微信号</button>
       <button data-type="phone" bindtap="addContactOption">＋ 手机号</button>

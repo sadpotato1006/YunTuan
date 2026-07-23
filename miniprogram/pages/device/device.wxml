@@ -15,14 +15,11 @@
       <view wx:else class="device-owner-avatar virtual-owner-avatar" style="background: {{socialProfile.avatarColor}}">{{socialProfile.avatarValue}}</view>
       <view class="owner-copy">
         <text class="owner-nickname">{{socialProfile.nickname}}</text>
-        <text class="device-name">{{device.name}}</text>
       </view>
       <button class="profile-edit-button" data-no-swipe="true" aria-label="编辑个人名片" bindtap="goSocialProfile">编辑</button>
     </view>
 
-    <text class="profile-bio">{{socialProfile.bio}}</text>
     <view class="profile-meta">
-      <text class="profile-intention">{{socialProfile.intentionLabel}}</text>
       <text wx:for="{{socialProfile.tags}}" wx:key="*this" class="profile-tag">{{item}}</text>
     </view>
 
@@ -68,47 +65,16 @@
     </view>
   </block>
 
-  <block wx:if="{{device.ready}}">
-    <view class="section-head"><text>常用功能</text></view>
-    <view class="card core-controls-card">
-      <view class="setting-row">
-        <view><text class="control-title">社交模式</text><text class="control-tip">开启后才会发现附近的云团伙伴</text></view>
-        <switch checked="{{device.socialMode}}" disabled="{{operating}}" color="#52796F" data-no-swipe="true" bindchange="toggleSocialMode" />
-      </view>
-      <view class="setting-row compact-setting-row">
-        <view><text class="control-title">震动反馈</text><text class="control-tip">遇到附近伙伴时震动提醒</text></view>
-        <switch checked="{{settings.vibration}}" disabled="{{settingSaving}}" color="#52796F" data-key="vibration" data-no-swipe="true" bindchange="updateAlertSetting" />
-      </view>
-      <view class="device-action-row">
-        <button class="find-device-button" disabled="{{operating}}" data-no-swipe="true" bindtap="findDevice">提醒查找挂件</button>
-        <button class="disconnect-device-button" disabled="{{operating}}" data-no-swipe="true" bindtap="disconnectDevice">断开连接</button>
-      </view>
-    </view>
-  </block>
-
-  <view class="section-head"><text>更多设置</text></view>
-  <view class="card account-tools-card">
-    <view class="account-tool-row private-tools-toggle" bindtap="togglePrivateTools">
-      <view class="account-tool-icon">设</view>
-      <view class="account-tool-copy">
-        <text class="account-tool-title">隐私与数据</text>
-        <text class="account-tool-tip">隐私说明、缓存和个人数据</text>
-      </view>
-      <text class="private-toggle-text">{{showPrivateTools ? '收起' : '展开'}} {{showPrivateTools ? '⌃' : '⌄'}}</text>
-    </view>
-    <view wx:if="{{showPrivateTools}}" class="private-tools" data-no-swipe="true">
-      <view class="private-tool-item" bindtap="showPrivacy"><text>隐私说明</text><text>›</text></view>
-      <view class="private-tool-item" bindtap="showAbout"><text>关于云团</text><text>›</text></view>
-      <view class="private-tool-item" bindtap="clearLocalData"><text>清除本机缓存</text><text>›</text></view>
-      <view class="private-tool-item danger-tool" bindtap="deleteCloudData"><text>{{deletingCloudData ? '正在删除个人数据…' : '删除全部个人数据'}}</text><text>›</text></view>
+  <view wx:if="{{device.ready}}" class="card quick-actions-card">
+    <view class="device-action-row">
+      <button class="find-device-button" disabled="{{operating}}" data-no-swipe="true" bindtap="findDevice">提醒查找挂件</button>
+      <button class="disconnect-device-button" disabled="{{operating}}" data-no-swipe="true" bindtap="disconnectDevice">断开连接</button>
     </view>
   </view>
 
-  <view class="developer-entry" bindtap="goDeveloperTools">
-    <view>
-      <text class="developer-entry-title">开发者工具</text>
-      <text class="developer-entry-tip">设备测试、BLE 联调和故障诊断</text>
-    </view>
+  <view class="card more-entry" bindtap="goMore">
+    <view class="more-entry-icon"><view class="more-dot"></view><view class="more-dot"></view><view class="more-dot"></view></view>
+    <text class="more-entry-title">更多</text>
     <text class="entry-arrow">›</text>
   </view>
 </view>

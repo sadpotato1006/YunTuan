@@ -36,25 +36,25 @@ assert.deepStrictEqual(protocol.parseAlertSettingsData(response.data), {
   sound: false
 });
 
-const deviceWxml = fs.readFileSync(
-  path.join(__dirname, "..", "miniprogram", "pages", "device", "device.wxml"),
+const moreWxml = fs.readFileSync(
+  path.join(__dirname, "..", "miniprogram", "pages", "more", "more.wxml"),
   "utf8"
 );
-assert.match(deviceWxml, /data-key="vibration"/);
-assert.doesNotMatch(deviceWxml, /data-key="socialReminder"/);
-assert.doesNotMatch(deviceWxml, /data-key="sound"/);
-assert.match(deviceWxml, /震动反馈/);
-assert.match(deviceWxml, /wx:if="\{\{device\.ready\}\}"/);
-assert.match(deviceWxml, /disabled="\{\{settingSaving\}\}"/);
-const deviceJs = fs.readFileSync(
-  path.join(__dirname, "..", "miniprogram", "pages", "device", "device.js"),
+assert.match(moreWxml, /data-key="vibration"/);
+assert.doesNotMatch(moreWxml, /data-key="socialReminder"/);
+assert.doesNotMatch(moreWxml, /data-key="sound"/);
+assert.match(moreWxml, /硬件设置/);
+assert.match(moreWxml, /震动反馈/);
+assert.match(moreWxml, /!device\.ready \|\| settingSaving/);
+const moreJs = fs.readFileSync(
+  path.join(__dirname, "..", "miniprogram", "pages", "more", "more.js"),
   "utf8"
 );
-assert.match(deviceJs, /deviceService\.setAlertSettings\(next\)/);
-assert.match(deviceJs, /settingsService\.saveSettings/);
+assert.match(moreJs, /deviceService\.setAlertSettings\(next\)/);
+assert.match(moreJs, /settingsService\.saveSettings/);
 
-assert.match(deviceWxml, /隐私与数据/);
-assert.match(deviceWxml, /wx:if="\{\{showPrivateTools\}\}"/);
+assert.match(moreWxml, /隐私与数据/);
+assert.match(moreWxml, /wx:if="\{\{showPrivateTools\}\}"/);
 
 const firmware = fs.readFileSync(path.join(__dirname, "..", "hard", "main.cpp"), "utf8");
 assert.match(firmware, /handleSetAlertSettings/);

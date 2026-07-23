@@ -2,6 +2,7 @@
   "pages": [
     "pages/device/device",
     "pages/partners/partners",
+    "pages/more/more",
     "pages/chat/chat",
     "pages/ble-debug/ble-debug",
     "pages/device-lab/device-lab",
